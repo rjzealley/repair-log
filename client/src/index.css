@@ -1,0 +1,35 @@
+:root {
+  --text: #1f2937;
+  --text-muted: #4b5563;
+  --border: #d0d5dd;
+  --bg: #f9fafb;
+  --surface: #ffffff;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+  background: var(--surface);
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+h1,
+p,
+label {
+  margin: 0;
+}
+
+p {
+  color: var(--text-muted);
+}
