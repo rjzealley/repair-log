@@ -11,9 +11,44 @@ import { parse } from 'csv-parse/sync';
 dotenv.config();
 
 const app = express();
-const port = Number(process.env.PORT ?? 5000);
+const port = process.env.PORT ?? 5000;
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
+const defaultAllowedOrigins = [
+	'https://app.northallertonrepaircafe.org.uk',
+	'https://northallertonrepaircafe.org.uk',
+	'http://localhost:5173',
+];
+
+const normalizeOrigin = (origin: string): string => origin.trim().replace(/\/+$/, '');
+
+const allowedOrigins = new Set(
+	(process.env.CLIENT_ORIGIN
+		? process.env.CLIENT_ORIGIN.split(',')
+		: defaultAllowedOrigins
+	)
+		.map((origin) => origin.trim())
+		.filter((origin) => origin.length > 0)
+		.map(normalizeOrigin),
+);
+
+app.use(
+	cors({
+		origin(origin, callback) {
+			if (!origin) {
+				callback(null, true);
+				return;
+			}
+
+			const normalizedOrigin = normalizeOrigin(origin);
+			if (allowedOrigins.has(normalizedOrigin)) {
+				callback(null, true);
+				return;
+			}
+
+			callback(new Error(`CORS origin not allowed: ${origin}`));
+		},
+	}),
+);
 app.use(express.json());
 
 const getRequiredEnv = (name: string): string => {
@@ -26,14 +61,30 @@ const getRequiredEnv = (name: string): string => {
 	return value;
 };
 
-const pool = mysql.createPool({
-	host: getRequiredEnv('DB_HOST'),
-	user: getRequiredEnv('DB_USER'),
-	password: getRequiredEnv('DB_PASSWORD'),
-	database: getRequiredEnv('DB_NAME'),
-	waitForConnections: true,
-	connectionLimit: 10,
-});
+// 1. Declare the pool variable globally so your route endpoints can access it
+let pool: mysql.Pool;
+
+try {
+    console.log("Validating environment keys and building database pool...");
+
+    pool = mysql.createPool({
+        host: getRequiredEnv('DB_HOST'),
+        user: getRequiredEnv('DB_USER'),
+        password: getRequiredEnv('DB_PASSWORD'),
+        database: getRequiredEnv('DB_NAME'),
+        waitForConnections: true,
+        connectionLimit: 10,
+    });
+
+    console.log("Database connection pool initialized successfully.");
+} catch (error: any) {
+    // 2. This intercepts the "Missing required environment variable" error 
+    // and explicitly surfaces it to Hostinger hPanel logs.
+    console.error("❌ FATAL STARTUP ERROR:", error.message || error);
+    
+    // Terminate the process cleanly so the system registers the failure state
+    process.exit(1);
+}
 
 type LookupGroup = 'source' | 'venue' | 'section' | 'repairer';
 
