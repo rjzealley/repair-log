@@ -57,6 +57,12 @@ interface ImportSummaryResponse {
   skippedInvalid: number
 }
 
+interface AuthUser {
+  email: string
+  luName: string
+  isAdmin: boolean
+}
+
 type AppPage = 'dashboard' | 'repairs'
 
 const formatDate = (dateValue: string): string => {
@@ -81,6 +87,24 @@ const parseOptionalNumber = (value: string): number => {
 
 function App() {
   const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:5000'
+  const [token, setToken] = useState<string | null>(() => window.localStorage.getItem('repair-log-token'))
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    const storedUser = window.localStorage.getItem('repair-log-user')
+    if (!storedUser) {
+      return null
+    }
+
+    try {
+      return JSON.parse(storedUser) as AuthUser
+    } catch {
+      return null
+    }
+  })
+  const [isLoginOpen, setIsLoginOpen] = useState(false)
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [loggingIn, setLoggingIn] = useState(false)
   const [activePage, setActivePage] = useState<AppPage>('dashboard')
   const [repairs, setRepairs] = useState<RepairRecord[]>([])
   const [events, setEvents] = useState<EventRecord[]>([])
@@ -90,6 +114,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedEventId, setSelectedEventId] = useState<number | 'all'>('all')
+  const [selectedSectionId, setSelectedSectionId] = useState<number | 'all'>('all')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingRepairId, setEditingRepairId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
@@ -111,6 +136,48 @@ function App() {
   })
 
   const isEditing = editingRepairId !== null
+  const isAdmin = authUser?.isAdmin === true
+
+  const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers)
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+
+    return fetch(url, { ...options, headers })
+  }, [token])
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoggingIn(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${apiBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      })
+
+      if (!response.ok) {
+        const result: { message?: string } = await response.json().catch(() => ({}))
+        throw new Error(result.message ?? 'Login failed.')
+      }
+
+      const result: { token: string; user: AuthUser } = await response.json()
+      window.localStorage.setItem('repair-log-token', result.token)
+      const user = result.user
+      window.localStorage.setItem('repair-log-user', JSON.stringify(user))
+      setToken(result.token)
+      setAuthUser(user)
+      setIsLoginOpen(false)
+      setLoginPassword('')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Login failed.')
+    } finally {
+      setLoggingIn(false)
+    }
+  }
 
   const loadData = useCallback(async () => {
       setLoading(true)
@@ -118,17 +185,17 @@ function App() {
 
       try {
         const [eventsResponse, repairsResponse] = await Promise.all([
-          fetch(`${apiBase}/api/events`),
-          fetch(`${apiBase}/api/repairs?limit=250`),
+          apiFetch(`${apiBase}/api/events`),
+          apiFetch(`${apiBase}/api/repairs?limit=250`),
         ])
 
         const [sourcesResponse, sectionsResponse, repairersResponse] = await Promise.all([
-          fetch(`${apiBase}/api/lookups/source`),
-          fetch(`${apiBase}/api/lookups/section`),
-          fetch(`${apiBase}/api/lookups/repairer`),
+          apiFetch(`${apiBase}/api/lookups/source`),
+          apiFetch(`${apiBase}/api/lookups/section`),
+          apiFetch(`${apiBase}/api/lookups/repairer`),
         ])
 
-        const maxUidResponse = await fetch(`${apiBase}/api/repairs/max-uid`)
+        const maxUidResponse = await apiFetch(`${apiBase}/api/repairs/max-uid`)
 
         if (!eventsResponse.ok || !repairsResponse.ok || !sourcesResponse.ok || !sectionsResponse.ok || !repairersResponse.ok || !maxUidResponse.ok) {
           throw new Error('API request failed')
@@ -151,7 +218,7 @@ function App() {
       } finally {
         setLoading(false)
       }
-    }, [apiBase])
+    }, [apiBase, apiFetch])
 
   useEffect(() => {
     void loadData()
@@ -162,7 +229,7 @@ function App() {
     setImportMessage(null)
 
     try {
-      const response = await fetch(`${apiBase}/api/import/repairs-csv`, {
+      const response = await apiFetch(`${apiBase}/api/import/repairs-csv`, {
         method: 'POST',
       })
 
@@ -184,12 +251,12 @@ function App() {
   }
 
   const filteredRepairs = useMemo(() => {
-    if (selectedEventId === 'all') {
-      return repairs
-    }
-
-    return repairs.filter((item) => item.rp_event === selectedEventId)
-  }, [repairs, selectedEventId])
+    return repairs.filter((item) => {
+      const matchesEvent = selectedEventId === 'all' || item.rp_event === selectedEventId
+      const matchesSection = selectedSectionId === 'all' || item.rp_section === selectedSectionId
+      return matchesEvent && matchesSection
+    })
+  }, [repairs, selectedEventId, selectedSectionId])
 
   const dashboardEvents = useMemo(() => {
     return events.map((event) => {
@@ -203,6 +270,7 @@ function App() {
         venueName: event.venue_name ?? 'Unknown venue',
         totalRepairs,
         fixedRepairs,
+        percentFixed: totalRepairs === 0 ? 0 : Math.round((fixedRepairs / totalRepairs) * 100),
       }
     })
   }, [events, repairs])
@@ -267,7 +335,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${apiBase}/api/repairs/${repairId}`, { method: 'DELETE' })
+      const response = await apiFetch(`${apiBase}/api/repairs/${repairId}`, { method: 'DELETE' })
       if (!response.ok) {
         throw new Error('Delete failed')
       }
@@ -304,7 +372,7 @@ function App() {
       const url = isEditing ? `${apiBase}/api/repairs/${editingRepairId}` : `${apiBase}/api/repairs`
       const method = isEditing ? 'PUT' : 'POST'
 
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -344,38 +412,52 @@ function App() {
 
   return (
     <main className="page">
-      <nav className="top-menu" aria-label="Primary">
-        <div className="menu-links">
-          <button
-            type="button"
-            className={activePage === 'dashboard' ? 'menu-link active' : 'menu-link'}
-            onClick={() => setActivePage('dashboard')}
-          >
-            Home
-          </button>
-          <button
-            type="button"
-            className={activePage === 'repairs' ? 'menu-link active' : 'menu-link'}
-            onClick={() => setActivePage('repairs')}
-          >
-            Repairs
-          </button>
-        </div>
-        <div className="menu-logo-space" aria-label="logo">
-          <img src={logoOnly} alt="Logo" className="menu-logo" />
-        </div>
-      </nav>
-
       <header className="header">
-        <div>
-          <h1>{activePage === 'dashboard' ? 'Dashboard' : 'Repair Log'}</h1>
-          <p>
-            {activePage === 'dashboard'
-              ? 'Summary of repair activity.'
-              : 'Issues tracked by event, source, section, and venue.'}
-          </p>
+        <button
+          type="button"
+          className="logo-home"
+          onClick={() => {
+            setSelectedEventId('all')
+            setSelectedSectionId('all')
+            setActivePage('dashboard')
+          }}
+          aria-label="Home"
+        >
+          <img src={logoOnly} alt="Home" className="menu-logo" />
+        </button>
+        <div className="header-actions">
+          {token ? (
+            <div className="user-actions">
+              <span>{authUser?.luName ?? 'User'}</span>
+              <button
+                type="button"
+                className="logout-button"
+                onClick={() => {
+                  window.localStorage.removeItem('repair-log-token')
+                  window.localStorage.removeItem('repair-log-user')
+                  setToken(null)
+                  setAuthUser(null)
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="logout-button" onClick={() => setIsLoginOpen(true)}>
+              Sign In
+            </button>
+          )}
         </div>
       </header>
+
+      <div className="page-heading">
+        <h1>{activePage === 'dashboard' ? 'Dashboard' : 'Repair Log'}</h1>
+        <p>
+          {activePage === 'dashboard'
+            ? 'Summary of repair activity.'
+            : 'Issues tracked by event, source, section, and venue.'}
+        </p>
+      </div>
 
       {loading && <p className="status">Loading repairs...</p>}
       {!loading && error && <p className="status error">{error}</p>}
@@ -405,6 +487,13 @@ function App() {
           </div>
 
           <div className="dashboard-events-list" role="list">
+            <div className="dashboard-events-columns" role="row">
+              <span>Date</span>
+              <span>Venue</span>
+              <span>Repairs</span>
+              <span>Fixed</span>
+              <span>% Fixed</span>
+            </div>
             {dashboardEvents.length === 0 && <p className="dashboard-empty">No events found.</p>}
             {dashboardEvents.map((event) => (
               <button
@@ -417,6 +506,7 @@ function App() {
                 <span>{event.venueName}</span>
                 <span>{event.totalRepairs}</span>
                 <span>{event.fixedRepairs}</span>
+                <span>{event.percentFixed}%</span>
               </button>
             ))}
           </div>
@@ -442,12 +532,32 @@ function App() {
                 </option>
               ))}
             </select>
-            <button type="button" className="add-button" onClick={openAddDialog}>
-              Add Repair
-            </button>
-            <button type="button" className="import-button" onClick={handleImportCsv} disabled={importing}>
-              {importing ? 'Importing...' : 'Import CSV'}
-            </button>
+            <label htmlFor="section-filter">Section</label>
+            <select
+              id="section-filter"
+              value={selectedSectionId}
+              onChange={(event) => {
+                const value = event.target.value
+                setSelectedSectionId(value === 'all' ? 'all' : Number.parseInt(value, 10))
+              }}
+            >
+              <option value="all">All sections</option>
+              {sections.map((section) => (
+                <option key={section.lookup_id} value={section.lookup_id}>
+                  {section.lk_name}
+                </option>
+              ))}
+            </select>
+            {isAdmin && (
+              <>
+                <button type="button" className="add-button" onClick={openAddDialog}>
+                  Add Repair
+                </button>
+                <button type="button" className="import-button" onClick={handleImportCsv} disabled={importing}>
+                  {importing ? 'Importing...' : 'Import CSV'}
+                </button>
+              </>
+            )}
           </section>
 
           {importMessage && <p className="status">{importMessage}</p>}
@@ -495,26 +605,30 @@ function App() {
                             <path d="M4 4h16v12H7l-3 3V4zm3 4h10M7 11h7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                           </svg>
                         </button>
-                        <button
-                          type="button"
-                          className="icon-button"
-                          onClick={() => openEditDialog(repair)}
-                          aria-label="Edit repair"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M4 20h4l10-10-4-4L4 16v4zm11-13 4 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-button danger"
-                          onClick={() => handleDelete(repair.repair_id)}
-                          aria-label="Delete repair"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M5 7h14M9 7V5h6v2m-8 0 1 12h8l1-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              className="icon-button"
+                              onClick={() => openEditDialog(repair)}
+                              aria-label="Edit repair"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 20h4l10-10-4-4L4 16v4zm11-13 4 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-button danger"
+                              onClick={() => handleDelete(repair.repair_id)}
+                              aria-label="Delete repair"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M5 7h14M9 7V5h6v2m-8 0 1 12h8l1-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -651,6 +765,33 @@ function App() {
                 {saving ? 'Saving...' : 'Save'}
               </button>
             </div>
+          </section>
+        </div>
+      )}
+
+      {isLoginOpen && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setIsLoginOpen(false)}>
+          <section className="modal login-modal" role="dialog" aria-modal="true" aria-label="Sign in" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Sign in</h2>
+              <button type="button" className="modal-close" onClick={() => setIsLoginOpen(false)} aria-label="Close sign in dialog">
+                X
+              </button>
+            </div>
+            <form className="login-form" onSubmit={handleLogin}>
+              <label>
+                Email
+                <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoComplete="email" />
+              </label>
+              <label>
+                Password
+                <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required autoComplete="current-password" />
+              </label>
+              {loginError && <p className="status error">{loginError}</p>}
+              <button type="submit" className="login-button" disabled={loggingIn}>
+                {loggingIn ? 'Signing in...' : 'Sign in'}
+              </button>
+            </form>
           </section>
         </div>
       )}

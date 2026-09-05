@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import mysql from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2/promise';
 import type { ResultSetHeader } from 'mysql2/promise';
@@ -12,6 +14,7 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT ?? 5000;
+const jwtSecret = process.env.JWT_SECRET;
 
 const defaultAllowedOrigins = [
 	'https://app.northallertonrepaircafe.org.uk',
@@ -164,6 +167,24 @@ interface LookupCreateRow extends RowDataPacket {
 	next_seq: number;
 }
 
+interface LoguserRow extends RowDataPacket {
+	loguser_id: number;
+	lu_email: string;
+	lu_name: string;
+	lu_password: string;
+	lu_admin: number;
+}
+
+interface AuthClaims {
+	userId: number;
+	email: string;
+	isAdmin: boolean;
+}
+
+interface AuthenticatedRequest extends express.Request {
+	auth?: AuthClaims;
+}
+
 const defaultCsvImportPath = path.resolve(__dirname, '..', '..', 'client', 'src', 'assets', 'NRC Repairs Log - Repairs.csv');
 const configuredCsvImportPath = process.env.REPAIRS_CSV_IMPORT_PATH;
 const csvImportPath = configuredCsvImportPath
@@ -221,6 +242,91 @@ app.get('/api/health', async (_req, res) => {
 		res.status(500).json({ ok: false });
 	}
 });
+
+app.post('/api/auth/login', async (req, res, next) => {
+	const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+	const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+	if (!email || !password) {
+		res.status(400).json({ message: 'Email and password are required.' });
+		return;
+	}
+
+	if (!jwtSecret) {
+		res.status(500).json({ message: 'Authentication is not configured.' });
+		return;
+	}
+
+	try {
+		const [rows] = await pool.query<LoguserRow[]>(
+			'SELECT loguser_id, lu_email, lu_name, lu_password, lu_admin FROM logusers WHERE lu_email = ? LIMIT 1',
+			[email],
+		);
+		const user = rows[0];
+
+		if (!user || !(await bcrypt.compare(password, user.lu_password))) {
+			res.status(401).json({ message: 'Invalid email or password.' });
+			return;
+		}
+
+		const token = jwt.sign(
+			{ userId: user.loguser_id, email: user.lu_email, name: user.lu_name, isAdmin: Boolean(user.lu_admin) },
+			jwtSecret,
+			{ expiresIn: '8h' },
+		);
+
+		res.json({ token, user: { email: user.lu_email, luName: user.lu_name, isAdmin: Boolean(user.lu_admin) } });
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.use('/api', (req, res, next) => {
+	const authorization = req.header('authorization');
+	const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+
+	if (!token) {
+		next();
+		return;
+	}
+
+	if (!jwtSecret) {
+		res.status(500).json({ message: 'Authentication is not configured.' });
+		return;
+	}
+
+	try {
+		const claims = jwt.verify(token, jwtSecret);
+		if (typeof claims !== 'object' || claims === null || typeof claims.userId !== 'number' || typeof claims.email !== 'string') {
+			res.status(401).json({ message: 'Invalid token.' });
+			return;
+		}
+
+		(req as AuthenticatedRequest).auth = {
+			userId: claims.userId,
+			email: claims.email,
+			isAdmin: claims.isAdmin === true,
+		};
+		next();
+	} catch {
+		res.status(401).json({ message: 'Invalid or expired token.' });
+	}
+});
+
+const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+	const auth = (req as AuthenticatedRequest).auth;
+	if (!auth) {
+		res.status(401).json({ message: 'Administrator authentication required.' });
+		return;
+	}
+
+	if (!auth.isAdmin) {
+		res.status(403).json({ message: 'Administrator access required.' });
+		return;
+	}
+
+	next();
+};
 
 app.get('/api/lookups/:group', async (req, res, next) => {
 	const group = req.params.group as LookupGroup;
@@ -465,7 +571,7 @@ app.get('/api/repairs/max-uid', async (_req, res, next) => {
 	}
 });
 
-app.post('/api/import/repairs-csv', async (_req, res, next) => {
+app.post('/api/import/repairs-csv', requireAdmin, async (_req, res, next) => {
 	try {
 		const csvContent = await fs.readFile(csvImportPath, 'utf8');
 		const csvRows = parse(csvContent, {
@@ -636,7 +742,7 @@ app.post('/api/import/repairs-csv', async (_req, res, next) => {
 });
 
 app.get('/api/repairs/:id', async (req, res, next) => {
-	const id = parseIntParam(req.params.id);
+	const id = parseIntParam(typeof req.params.id === 'string' ? req.params.id : undefined);
 
 	if (id === undefined) {
 		res.status(400).json({ message: 'Repair id must be a number.' });
@@ -657,7 +763,7 @@ app.get('/api/repairs/:id', async (req, res, next) => {
 	}
 });
 
-app.post('/api/repairs', async (req, res, next) => {
+app.post('/api/repairs', requireAdmin, async (req, res, next) => {
 	const payload = parseRepairPayload(req.body);
 
 	if (!payload) {
@@ -697,8 +803,8 @@ app.post('/api/repairs', async (req, res, next) => {
 	}
 });
 
-app.put('/api/repairs/:id', async (req, res, next) => {
-	const id = parseIntParam(req.params.id);
+app.put('/api/repairs/:id', requireAdmin, async (req, res, next) => {
+	const id = parseIntParam(typeof req.params.id === 'string' ? req.params.id : undefined);
 	const payload = parseRepairPayload(req.body);
 
 	if (id === undefined || !payload) {
@@ -750,8 +856,8 @@ app.put('/api/repairs/:id', async (req, res, next) => {
 	}
 });
 
-app.delete('/api/repairs/:id', async (req, res, next) => {
-	const id = parseIntParam(req.params.id);
+app.delete('/api/repairs/:id', requireAdmin, async (req, res, next) => {
+	const id = parseIntParam(typeof req.params.id === 'string' ? req.params.id : undefined);
 
 	if (id === undefined) {
 		res.status(400).json({ message: 'Repair id must be a number.' });
