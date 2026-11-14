@@ -164,6 +164,21 @@
   color: #b42318;
 }
 
+.status.success {
+  color: #157347;
+}
+
+.login-link-button {
+  justify-self: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
 .dashboard {
   display: grid;
   gap: 1rem;
@@ -197,6 +212,17 @@
 
 .dashboard-events-header h2 {
   margin: 0 0 0.25rem;
+}
+
+.dashboard-events-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.event-form-error,
+.event-form-actions {
+  margin-top: 1rem;
 }
 
 .dashboard-events-list {

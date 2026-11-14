@@ -101,10 +101,20 @@ function App() {
     }
   })
   const [isLoginOpen, setIsLoginOpen] = useState(false)
+  const [isForgotPassword, setIsForgotPassword] = useState(false)
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [loginNotice, setLoginNotice] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
+  const [passwordResetToken, setPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).get('resetToken'))
+  const [passwordResetPassword, setPasswordResetPassword] = useState('')
+  const [passwordResetConfirmation, setPasswordResetConfirmation] = useState('')
+  const [passwordResetError, setPasswordResetError] = useState<string | null>(null)
+  const [passwordResetSubmitting, setPasswordResetSubmitting] = useState(false)
+  const [passwordResetRequestError, setPasswordResetRequestError] = useState<string | null>(null)
+  const [passwordResetRequestMessage, setPasswordResetRequestMessage] = useState<string | null>(null)
+  const [passwordResetRequesting, setPasswordResetRequesting] = useState(false)
   const [activePage, setActivePage] = useState<AppPage>('dashboard')
   const [repairs, setRepairs] = useState<RepairRecord[]>([])
   const [events, setEvents] = useState<EventRecord[]>([])
@@ -120,6 +130,14 @@ function App() {
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false)
+  const [eventDate, setEventDate] = useState('')
+  const [eventVenue, setEventVenue] = useState('')
+  const [eventComment, setEventComment] = useState('')
+  const [venues, setVenues] = useState<LookupRecord[]>([])
+  const [loadingVenues, setLoadingVenues] = useState(false)
+  const [savingEvent, setSavingEvent] = useState(false)
+  const [eventError, setEventError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [maxRpUid, setMaxRpUid] = useState(0)
   const [formData, setFormData] = useState<RepairFormData>({
@@ -151,6 +169,7 @@ function App() {
     event.preventDefault()
     setLoggingIn(true)
     setLoginError(null)
+    setLoginNotice(null)
 
     try {
       const response = await fetch(`${apiBase}/api/auth/login`, {
@@ -176,6 +195,70 @@ function App() {
       setLoginError(error instanceof Error ? error.message : 'Login failed.')
     } finally {
       setLoggingIn(false)
+    }
+  }
+
+  const handlePasswordResetRequest = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPasswordResetRequesting(true)
+    setPasswordResetRequestError(null)
+    setPasswordResetRequestMessage(null)
+
+    try {
+      const response = await fetch(`${apiBase}/api/auth/request-password-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail }),
+      })
+      const result: { message?: string } = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result.message ?? 'Could not request a password reset.')
+      }
+
+      setPasswordResetRequestMessage(result.message ?? 'If an account exists for that email, a password reset link has been sent.')
+    } catch (error) {
+      setPasswordResetRequestError(error instanceof Error ? error.message : 'Could not request a password reset.')
+    } finally {
+      setPasswordResetRequesting(false)
+    }
+  }
+
+  const handlePasswordReset = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPasswordResetError(null)
+    if (passwordResetPassword !== passwordResetConfirmation) {
+      setPasswordResetError('Passwords do not match.')
+      return
+    }
+
+    setPasswordResetSubmitting(true)
+    try {
+      const response = await fetch(`${apiBase}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: passwordResetToken, password: passwordResetPassword }),
+      })
+      const result: { message?: string } = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result.message ?? 'Could not reset the password.')
+      }
+
+      const url = new URL(window.location.href)
+      url.searchParams.delete('resetToken')
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+      setPasswordResetToken(null)
+      setPasswordResetPassword('')
+      setPasswordResetConfirmation('')
+      window.localStorage.removeItem('repair-log-token')
+      window.localStorage.removeItem('repair-log-user')
+      setToken(null)
+      setAuthUser(null)
+      setIsLoginOpen(true)
+      setLoginNotice(result.message ?? 'Password updated. You can now sign in.')
+    } catch (error) {
+      setPasswordResetError(error instanceof Error ? error.message : 'Could not reset the password.')
+    } finally {
+      setPasswordResetSubmitting(false)
     }
   }
 
@@ -278,6 +361,60 @@ function App() {
   const openRepairsForEvent = (eventId: number) => {
     setSelectedEventId(eventId)
     setActivePage('repairs')
+  }
+
+  const openAddEventDialog = async () => {
+    setEventDate('')
+    setEventVenue('')
+    setEventComment('')
+    setEventError(null)
+    setVenues([])
+    setLoadingVenues(true)
+    setIsEventModalOpen(true)
+
+    try {
+      const response = await apiFetch(`${apiBase}/api/lookups/venue`)
+      if (!response.ok) {
+        throw new Error('Unable to load venues. Please close the dialog and try again.')
+      }
+      const venueData: LookupRecord[] = await response.json()
+      setVenues(venueData)
+      if (venueData.length === 0) {
+        setEventError('No venues are available. An administrator must add a venue to the lookup table first.')
+      }
+    } catch (error) {
+      setEventError(error instanceof Error ? error.message : 'Unable to load venues.')
+    } finally {
+      setLoadingVenues(false)
+    }
+  }
+
+  const handleAddEvent = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSavingEvent(true)
+    setEventError(null)
+
+    try {
+      const response = await apiFetch(`${apiBase}/api/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ev_date: eventDate, ev_venue: Number(eventVenue), ev_comment: eventComment }),
+      })
+      if (!response.ok) {
+        const result: { message?: string } = await response.json().catch(() => ({}))
+        throw new Error(result.message ?? 'Unable to add event.')
+      }
+
+      const created: EventRecord = await response.json()
+      setEvents((current) => [...current, created].sort((a, b) => (
+        b.ev_date.slice(0, 10).localeCompare(a.ev_date.slice(0, 10)) || b.event_id - a.event_id
+      )))
+      setIsEventModalOpen(false)
+    } catch (error) {
+      setEventError(error instanceof Error ? error.message : 'Unable to add event.')
+    } finally {
+      setSavingEvent(false)
+    }
   }
 
   const resetForm = (uidValue = 0) => {
@@ -410,6 +547,44 @@ function App() {
     }
   }
 
+  if (passwordResetToken) {
+    return (
+      <main className="login-page">
+        <form className="login-form" onSubmit={handlePasswordReset}>
+          <img src={logoOnly} alt="" className="login-logo" />
+          <h1>Choose a new password</h1>
+          <p>Enter a new password with at least 12 characters.</p>
+          <label>
+            New password
+            <input
+              type="password"
+              value={passwordResetPassword}
+              onChange={(event) => setPasswordResetPassword(event.target.value)}
+              required
+              minLength={12}
+              autoComplete="new-password"
+            />
+          </label>
+          <label>
+            Confirm new password
+            <input
+              type="password"
+              value={passwordResetConfirmation}
+              onChange={(event) => setPasswordResetConfirmation(event.target.value)}
+              required
+              minLength={12}
+              autoComplete="new-password"
+            />
+          </label>
+          {passwordResetError && <p className="status error">{passwordResetError}</p>}
+          <button type="submit" className="login-button" disabled={passwordResetSubmitting}>
+            {passwordResetSubmitting ? 'Updating password...' : 'Update password'}
+          </button>
+        </form>
+      </main>
+    )
+  }
+
   return (
     <main className="page">
       <header className="header">
@@ -482,7 +657,14 @@ function App() {
           </div>
 
           <div className="dashboard-events-header">
-            <h2>Events Summary</h2>
+            <div className="dashboard-events-title">
+              <h2>Events Summary</h2>
+              {isAdmin && (
+                <button type="button" className="add-button" onClick={() => { void openAddEventDialog() }}>
+                  Add Event
+                </button>
+              )}
+            </div>
             <p>Click an event to open the Repair Log with that event selected.</p>
           </div>
 
@@ -639,6 +821,47 @@ function App() {
         </>
       )}
 
+      {isEventModalOpen && (
+        <div className="modal-backdrop" role="presentation" onClick={() => { if (!savingEvent) setIsEventModalOpen(false) }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-label="Add event" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Add Event</h2>
+              <button type="button" className="modal-close" onClick={() => setIsEventModalOpen(false)} disabled={savingEvent} aria-label="Close dialog">
+                X
+              </button>
+            </div>
+            <form onSubmit={handleAddEvent}>
+              <div className="modal-grid">
+                <label>
+                  Date
+                  <input type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} min="1000-01-01" max="9999-12-31" required />
+                </label>
+                <label>
+                  Venue
+                  <select value={eventVenue} onChange={(event) => setEventVenue(event.target.value)} required disabled={loadingVenues}>
+                    <option value="">{loadingVenues ? 'Loading venues...' : 'Select venue'}</option>
+                    {venues.map((venue) => (
+                      <option key={venue.lookup_id} value={venue.lookup_id}>{venue.lk_name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="wide">
+                  Comment (optional)
+                  <textarea value={eventComment} onChange={(event) => setEventComment(event.target.value)} maxLength={255} />
+                </label>
+              </div>
+              {eventError && <p className="status error event-form-error" role="alert">{eventError}</p>}
+              <div className="modal-actions event-form-actions">
+                <button type="button" onClick={() => setIsEventModalOpen(false)} disabled={savingEvent}>Cancel</button>
+                <button type="submit" disabled={savingEvent || loadingVenues || venues.length === 0}>
+                  {savingEvent ? 'Saving...' : 'Add Event'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {isModalOpen && (
         <div className="modal-backdrop" role="presentation" onClick={closeDialog}>
           <section className="modal" role="dialog" aria-modal="true" aria-label={isEditing ? 'Edit repair' : 'Add repair'} onClick={(event) => event.stopPropagation()}>
@@ -770,28 +993,60 @@ function App() {
       )}
 
       {isLoginOpen && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setIsLoginOpen(false)}>
+        <div className="modal-backdrop" role="presentation" onClick={() => { setIsLoginOpen(false); setIsForgotPassword(false) }}>
           <section className="modal login-modal" role="dialog" aria-modal="true" aria-label="Sign in" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h2>Sign in</h2>
-              <button type="button" className="modal-close" onClick={() => setIsLoginOpen(false)} aria-label="Close sign in dialog">
+              <h2>{isForgotPassword ? 'Reset your password' : 'Sign in'}</h2>
+              <button type="button" className="modal-close" onClick={() => { setIsLoginOpen(false); setIsForgotPassword(false) }} aria-label="Close sign in dialog">
                 X
               </button>
             </div>
-            <form className="login-form" onSubmit={handleLogin}>
-              <label>
-                Email
-                <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoComplete="email" />
-              </label>
-              <label>
-                Password
-                <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required autoComplete="current-password" />
-              </label>
-              {loginError && <p className="status error">{loginError}</p>}
-              <button type="submit" className="login-button" disabled={loggingIn}>
-                {loggingIn ? 'Signing in...' : 'Sign in'}
-              </button>
-            </form>
+            {isForgotPassword ? (
+              <form className="login-form" onSubmit={handlePasswordResetRequest}>
+                <p>Enter your email address and, if there is an account for it, we'll send a reset link.</p>
+                <label>
+                  Email
+                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoComplete="email" />
+                </label>
+                {passwordResetRequestError && <p className="status error">{passwordResetRequestError}</p>}
+                {passwordResetRequestMessage && <p className="status success">{passwordResetRequestMessage}</p>}
+                <button type="submit" className="login-button" disabled={passwordResetRequesting}>
+                  {passwordResetRequesting ? 'Sending...' : 'Send reset link'}
+                </button>
+                <button type="button" className="login-link-button" onClick={() => setIsForgotPassword(false)}>
+                  Back to sign in
+                </button>
+              </form>
+            ) : (
+              <form className="login-form" onSubmit={handleLogin}>
+                <label>
+                  Email
+                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required autoComplete="email" />
+                </label>
+                <label>
+                  Password
+                  <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required autoComplete="current-password" />
+                </label>
+                {loginError && <p className="status error">{loginError}</p>}
+                {loginNotice && <p className="status success">{loginNotice}</p>}
+                <button type="submit" className="login-button" disabled={loggingIn}>
+                  {loggingIn ? 'Signing in...' : 'Sign in'}
+                </button>
+                <button
+                  type="button"
+                  className="login-link-button"
+                  onClick={() => {
+                    setIsForgotPassword(true)
+                    setLoginError(null)
+                    setLoginNotice(null)
+                    setPasswordResetRequestError(null)
+                    setPasswordResetRequestMessage(null)
+                  }}
+                >
+                  Forgot your password?
+                </button>
+              </form>
+            )}
           </section>
         </div>
       )}

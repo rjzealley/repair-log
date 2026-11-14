@@ -3,8 +3,10 @@ import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 import mysql from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2/promise';
 import type { ResultSetHeader } from 'mysql2/promise';
@@ -175,6 +177,15 @@ interface LoguserRow extends RowDataPacket {
 	lu_admin: number;
 }
 
+interface PasswordResetTokenRow extends RowDataPacket {
+	user_id: number;
+}
+
+interface PasswordResetUserRow extends RowDataPacket {
+	loguser_id: number;
+	lu_email: string;
+}
+
 interface AuthClaims {
 	userId: number;
 	email: string;
@@ -234,6 +245,31 @@ const parseCsvDate = (value: string): string | null => {
 
 const normalizeLookupName = (value: string): string => value.trim();
 
+let passwordResetTableInitialized: Promise<void> | null = null;
+
+const ensurePasswordResetTable = async (): Promise<void> => {
+	if (!passwordResetTableInitialized) {
+		passwordResetTableInitialized = pool.query(`
+			CREATE TABLE IF NOT EXISTS password_reset_tokens (
+				user_id BIGINT NOT NULL,
+				token_hash CHAR(64) NOT NULL,
+				expires_at DATETIME NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (token_hash),
+				INDEX password_reset_user_id (user_id),
+				INDEX password_reset_expires_at (expires_at)
+			)
+		`).then(() => undefined);
+	}
+
+	try {
+		await passwordResetTableInitialized;
+	} catch (error) {
+		passwordResetTableInitialized = null;
+		throw error;
+	}
+};
+
 app.get('/api/health', async (_req, res) => {
 	try {
 		await pool.query('SELECT 1');
@@ -276,6 +312,138 @@ app.post('/api/auth/login', async (req, res, next) => {
 		);
 
 		res.json({ token, user: { email: user.lu_email, luName: user.lu_name, isAdmin: Boolean(user.lu_admin) } });
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.post('/api/auth/request-password-reset', async (req, res, next) => {
+	const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+	if (!email) {
+		res.status(400).json({ message: 'Email is required.' });
+		return;
+	}
+
+	const smtpHost = process.env.SMTP_HOST;
+	const smtpPort = Number(process.env.SMTP_PORT);
+	const smtpUser = process.env.SMTP_USER;
+	const smtpPassword = process.env.SMTP_PASSWORD;
+	const emailFrom = process.env.EMAIL_FROM;
+	const clientUrl = process.env.CLIENT_URL;
+	if (
+		!smtpHost
+		|| !Number.isInteger(smtpPort)
+		|| smtpPort < 1
+		|| smtpPort > 65535
+		|| !emailFrom
+		|| !clientUrl
+		|| Boolean(smtpUser) !== Boolean(smtpPassword)
+	) {
+		res.status(503).json({ message: 'Password reset email is not configured.' });
+		return;
+	}
+
+	try {
+		await ensurePasswordResetTable();
+		const [users] = await pool.query<PasswordResetUserRow[]>(
+			'SELECT loguser_id, lu_email FROM logusers WHERE lu_email = ? LIMIT 1',
+			[email],
+		);
+		const user = users[0];
+
+		if (user) {
+			const token = randomBytes(32).toString('base64url');
+			const tokenHash = createHash('sha256').update(token).digest('hex');
+			await pool.execute(
+				'DELETE FROM password_reset_tokens WHERE user_id = ?',
+				[user.loguser_id],
+			);
+			await pool.execute(
+				'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 30 MINUTE))',
+				[user.loguser_id, tokenHash],
+			);
+
+			const resetUrl = new URL(clientUrl);
+			resetUrl.searchParams.set('resetToken', token);
+			const mailer = nodemailer.createTransport({
+				host: smtpHost,
+				port: smtpPort,
+				secure: process.env.SMTP_SECURE === 'true',
+				...(smtpUser && smtpPassword ? { auth: { user: smtpUser, pass: smtpPassword } } : {}),
+			});
+
+			try {
+				await mailer.sendMail({
+					from: emailFrom,
+					to: user.lu_email,
+					subject: 'Reset your Repair Log password',
+					text: `A password reset was requested for your Repair Log account. Use this link within 30 minutes to choose a new password:\n\n${resetUrl.toString()}\n\nIf you did not request this, you can ignore this email.`,
+				});
+			} catch (error) {
+				try {
+					await pool.execute('DELETE FROM password_reset_tokens WHERE token_hash = ?', [tokenHash]);
+				} catch (cleanupError) {
+					console.error('Failed to remove an unsent password reset token.', cleanupError);
+				}
+				throw error;
+			}
+		}
+
+		res.json({ message: 'If an account exists for that email, a password reset link has been sent.' });
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.post('/api/auth/reset-password', async (req, res, next) => {
+	const token = typeof req.body?.token === 'string' ? req.body.token : '';
+	const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+	if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+		res.status(400).json({ message: 'This password reset link is invalid or has expired.' });
+		return;
+	}
+	if (password.length < 12) {
+		res.status(400).json({ message: 'Password must be at least 12 characters long.' });
+		return;
+	}
+
+	try {
+		await ensurePasswordResetTable();
+		const tokenHash = createHash('sha256').update(token).digest('hex');
+		const passwordHash = await bcrypt.hash(password, 12);
+		const connection = await pool.getConnection();
+
+		try {
+			await connection.beginTransaction();
+			const [tokens] = await connection.query<PasswordResetTokenRow[]>(
+				'SELECT user_id FROM password_reset_tokens WHERE token_hash = ? AND expires_at > UTC_TIMESTAMP() FOR UPDATE',
+				[tokenHash],
+			);
+			const resetToken = tokens[0];
+
+			if (!resetToken) {
+				await connection.rollback();
+				res.status(400).json({ message: 'This password reset link is invalid or has expired.' });
+				return;
+			}
+
+			await connection.execute(
+				'UPDATE logusers SET lu_password = ? WHERE loguser_id = ?',
+				[passwordHash, resetToken.user_id],
+			);
+			await connection.execute(
+				'DELETE FROM password_reset_tokens WHERE user_id = ?',
+				[resetToken.user_id],
+			);
+			await connection.commit();
+			res.json({ message: 'Password updated. You can now sign in.' });
+		} catch (error) {
+			await connection.rollback();
+			throw error;
+		} finally {
+			connection.release();
+		}
 	} catch (error) {
 		next(error);
 	}
@@ -470,6 +638,53 @@ app.get('/api/events', async (req, res, next) => {
 		);
 
 		res.json(rows);
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.post('/api/events', requireAdmin, async (req, res, next) => {
+	const date = typeof req.body?.ev_date === 'string' ? req.body.ev_date : '';
+	const venueId = req.body?.ev_venue;
+	const comment = typeof req.body?.ev_comment === 'string' ? req.body.ev_comment.trim() : '';
+	const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+
+	if (
+		!parsedDate
+		|| Number.isNaN(parsedDate.getTime())
+		|| parsedDate.toISOString().slice(0, 10) !== date
+		|| date < '1000-01-01'
+		|| !Number.isSafeInteger(venueId)
+		|| venueId <= 0
+		|| (req.body?.ev_comment !== undefined && typeof req.body.ev_comment !== 'string')
+		|| Array.from(comment).length > 255
+	) {
+		res.status(400).json({ message: 'A valid date, venue, and comment of at most 255 characters are required.' });
+		return;
+	}
+
+	try {
+		const [venues] = await pool.query<LookupRow[]>(
+			"SELECT lookup_id, lk_name FROM lookup WHERE lookup_id = ? AND lk_group = 'venue' AND COALESCE(lk_header, 0) = 0 LIMIT 1",
+			[venueId],
+		);
+		const venue = venues[0];
+		if (!venue) {
+			res.status(400).json({ message: 'Please select a valid venue.' });
+			return;
+		}
+
+		const [result] = await pool.execute<ResultSetHeader>(
+			'INSERT INTO event (ev_date, ev_venue, ev_comment) VALUES (?, ?, ?)',
+			[date, venueId, comment],
+		);
+		res.status(201).json({
+			event_id: result.insertId,
+			ev_date: date,
+			ev_venue: venueId,
+			ev_comment: comment,
+			venue_name: venue.lk_name,
+		});
 	} catch (error) {
 		next(error);
 	}
