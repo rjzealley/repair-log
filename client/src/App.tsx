@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import logoOnly from './assets/Logo_only_trans.png'
 
@@ -140,6 +140,7 @@ function App() {
   const [eventError, setEventError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [maxRpUid, setMaxRpUid] = useState(0)
+  const itemInputRef = useRef<HTMLInputElement>(null)
   const [formData, setFormData] = useState<RepairFormData>({
     rp_uid: '0',
     rp_event: '',
@@ -541,6 +542,7 @@ function App() {
       resetForm(nextMaxUid + 1)
       setFormData((current) => ({ ...current, rp_event: preservedEvent }))
       setSaving(false)
+      itemInputRef.current?.focus()
     } catch {
       setFormError('Save failed. Please try again.')
       setSaving(false)
@@ -766,7 +768,10 @@ function App() {
                   </tr>
                 )}
                 {filteredRepairs.map((repair) => (
-                  <tr key={repair.repair_id}>
+                  <tr
+                    key={repair.repair_id}
+                    className={repair.rp_tryfix ? (repair.rp_fixed ? 'repair-fixed' : 'repair-tried') : undefined}
+                  >
                     <td>{repair.repair_id}</td>
                     <td>{formatDate(repair.event_date)}</td>
                     <td>{repair.venue_name ?? 'Unknown'}</td>
@@ -897,6 +902,7 @@ function App() {
               <label>
                 Item
                 <input
+                  ref={itemInputRef}
                   type="text"
                   value={formData.rp_item}
                   onChange={(event) => setFormData((current) => ({ ...current, rp_item: event.target.value }))}

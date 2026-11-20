@@ -296,6 +296,18 @@ th {
   background: #f4f6f8;
 }
 
+.table-wrap tbody tr {
+  background: #fff;
+}
+
+.table-wrap tbody tr.repair-tried {
+  background: #ffedd5;
+}
+
+.table-wrap tbody tr.repair-fixed {
+  background: #dcfce7;
+}
+
 .actions-cell {
   display: flex;
   gap: 0.35rem;
