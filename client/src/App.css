@@ -406,6 +406,12 @@ th {
   grid-column: 1 / -1;
 }
 
+.repair-selects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
 .checkbox-row {
   display: inline-flex;
   align-items: center;
@@ -492,7 +498,8 @@ th {
     width: 100%;
   }
 
-  .modal-grid {
+  .modal-grid,
+  .repair-selects {
     grid-template-columns: 1fr;
   }
 }

@@ -899,7 +899,7 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label>
+              <label className="wide">
                 Item
                 <input
                   ref={itemInputRef}
@@ -907,48 +907,6 @@ function App() {
                   value={formData.rp_item}
                   onChange={(event) => setFormData((current) => ({ ...current, rp_item: event.target.value }))}
                 />
-              </label>
-              <label>
-                Source
-                <select
-                  value={formData.rp_source}
-                  onChange={(event) => setFormData((current) => ({ ...current, rp_source: event.target.value }))}
-                >
-                  <option value="">Select source</option>
-                  {sources.map((source) => (
-                    <option key={source.lookup_id} value={source.lookup_id}>
-                      {source.lk_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Section
-                <select
-                  value={formData.rp_section}
-                  onChange={(event) => setFormData((current) => ({ ...current, rp_section: event.target.value }))}
-                >
-                  <option value="">Select section</option>
-                  {sections.map((section) => (
-                    <option key={section.lookup_id} value={section.lookup_id}>
-                      {section.lk_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Repairer
-                <select
-                  value={formData.rp_repairer}
-                  onChange={(event) => setFormData((current) => ({ ...current, rp_repairer: event.target.value }))}
-                >
-                  <option value="">Select repairer</option>
-                  {repairers.map((repairer) => (
-                    <option key={repairer.lookup_id} value={repairer.lookup_id}>
-                      {repairer.lk_name}
-                    </option>
-                  ))}
-                </select>
               </label>
               <label className="wide">
                 Problem
@@ -958,6 +916,50 @@ function App() {
                   onChange={(event) => setFormData((current) => ({ ...current, rp_problem: event.target.value }))}
                 />
               </label>
+              <div className="wide repair-selects">
+                <label>
+                  Source
+                  <select
+                    value={formData.rp_source}
+                    onChange={(event) => setFormData((current) => ({ ...current, rp_source: event.target.value }))}
+                  >
+                    <option value="">Select source</option>
+                    {sources.map((source) => (
+                      <option key={source.lookup_id} value={source.lookup_id}>
+                        {source.lk_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Section
+                  <select
+                    value={formData.rp_section}
+                    onChange={(event) => setFormData((current) => ({ ...current, rp_section: event.target.value }))}
+                  >
+                    <option value="">Select section</option>
+                    {sections.map((section) => (
+                      <option key={section.lookup_id} value={section.lookup_id}>
+                        {section.lk_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Repairer
+                  <select
+                    value={formData.rp_repairer}
+                    onChange={(event) => setFormData((current) => ({ ...current, rp_repairer: event.target.value }))}
+                  >
+                    <option value="">Select repairer</option>
+                    {repairers.map((repairer) => (
+                      <option key={repairer.lookup_id} value={repairer.lookup_id}>
+                        {repairer.lk_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <label className="wide">
                 Comments
                 <textarea
