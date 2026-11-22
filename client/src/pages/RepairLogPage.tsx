@@ -48,6 +48,7 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
     rp_fixed: false,
     rp_comments: '',
   })
+  const initialFormData = useRef(formData)
 
   const isEditing = editingRepairId !== null
 
@@ -85,10 +86,16 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
     })
   }, [repairs, selectedEventId, selectedSectionId])
 
-  const resetForm = (uidValue = 0) => {
-    setFormData({
+  const setInitialForm = (data: RepairFormData) => {
+    initialFormData.current = data
+    setFormData(data)
+    setFormError(null)
+  }
+
+  const resetForm = (uidValue = 0, eventId = '') => {
+    setInitialForm({
       rp_uid: String(uidValue),
-      rp_event: '',
+      rp_event: eventId,
       rp_item: '',
       rp_problem: '',
       rp_section: '',
@@ -98,20 +105,18 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
       rp_fixed: false,
       rp_comments: '',
     })
-    setFormError(null)
   }
 
   const openAddDialog = () => {
     setEditingRepairId(null)
     const defaultEvent = selectedEventId === null || selectedEventId === 'all' ? '' : String(selectedEventId)
-    resetForm(maxRpUid + 1)
-    setFormData((current) => ({ ...current, rp_event: defaultEvent }))
+    resetForm(maxRpUid + 1, defaultEvent)
     setIsModalOpen(true)
   }
 
   const openEditDialog = (repair: RepairRecord) => {
     setEditingRepairId(repair.repair_id)
-    setFormData({
+    setInitialForm({
       rp_uid: String(repair.rp_uid),
       rp_event: String(repair.rp_event),
       rp_item: repair.rp_item,
@@ -123,7 +128,6 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
       rp_fixed: Boolean(repair.rp_fixed),
       rp_comments: repair.rp_comments,
     })
-    setFormError(null)
     setIsModalOpen(true)
   }
 
@@ -131,6 +135,14 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
     setIsModalOpen(false)
     setSaving(false)
     setFormError(null)
+  }
+
+  const cancelDialog = () => {
+    const changed = (Object.keys(formData) as (keyof RepairFormData)[])
+      .some((key) => formData[key] !== initialFormData.current[key])
+    if (!changed || window.confirm('Discard changes and close the repair form?')) {
+      closeDialog()
+    }
   }
 
   const handleDelete = async (repairId: number) => {
@@ -205,9 +217,7 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
         return
       }
 
-      const preservedEvent = formData.rp_event
-      resetForm(nextMaxUid + 1)
-      setFormData((current) => ({ ...current, rp_event: preservedEvent }))
+      resetForm(nextMaxUid + 1, formData.rp_event)
       setSaving(false)
       itemInputRef.current?.focus()
     } catch {
@@ -281,7 +291,7 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th>Unique ID</th>
                   <th>Date</th>
                   <th>Venue</th>
                   <th>Item</th>
@@ -303,7 +313,7 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
                     key={repair.repair_id}
                     className={repair.rp_tryfix ? (repair.rp_fixed ? 'repair-fixed' : 'repair-tried') : undefined}
                   >
-                    <td>{repair.repair_id}</td>
+                    <td>{repair.rp_uid}</td>
                     <td>{formatDate(repair.event_date)}</td>
                     <td>{repair.venue_name ?? 'Unknown'}</td>
                     <td>{repair.rp_item}</td>
@@ -369,6 +379,7 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
           sections={sections}
           repairers={repairers}
           closeDialog={closeDialog}
+          cancelDialog={cancelDialog}
           handleSave={handleSave}
         />
       )}

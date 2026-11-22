@@ -14,6 +14,7 @@ interface Props {
   sections: LookupRecord[]
   repairers: LookupRecord[]
   closeDialog: () => void
+  cancelDialog: () => void
   handleSave: () => Promise<void>
 }
 
@@ -22,7 +23,7 @@ const compareLookupNames = (a: LookupRecord, b: LookupRecord) =>
 
 export function RepairDialog({
   isEditing, saving, formError, formData, setFormData, itemInputRef,
-  events, sources, sections, repairers, closeDialog, handleSave,
+  events, sources, sections, repairers, closeDialog, cancelDialog, handleSave,
 }: Props) {
   return (
     <div className="modal-backdrop" role="presentation" onClick={closeDialog}>
@@ -146,7 +147,7 @@ export function RepairDialog({
         {formError && <p className="status error">{formError}</p>}
 
         <div className="modal-actions">
-          <button type="button" onClick={() => { if (window.confirm('Discard changes and close the repair form?')) closeDialog() }} disabled={saving}>
+          <button type="button" onClick={cancelDialog} disabled={saving}>
             Cancel
           </button>
           <button type="button" onClick={handleSave} disabled={saving}>

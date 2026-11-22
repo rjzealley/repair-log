@@ -42,8 +42,10 @@ in the limited repair list.
 The dashboard is at `/` and the repair log is at `/repairs`. Repair log
 filters are retained in the URL as `event` and `section` query parameters,
 so links, refresh and browser navigation preserve the selection.
-The repair form's **Cancel** button asks for confirmation before discarding
-the current changes.
+The Unique ID shown in the repair log and form is the repair's `rp_uid`;
+`repair_id` is the internal database key.
+The repair form's **Cancel** button asks for confirmation only when there
+are unsaved changes.
 
 The web server must serve `index.html` for client routes. The supplied
 `client/hostinger.htaccess` contains the rewrite rules for Apache hosting.
