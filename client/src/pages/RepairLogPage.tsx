@@ -79,11 +79,13 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
   }
 
   const filteredRepairs = useMemo(() => {
-    return repairs.filter((item) => {
-      const matchesEvent = selectedEventId === 'all' || item.rp_event === selectedEventId
-      const matchesSection = selectedSectionId === 'all' || item.rp_section === selectedSectionId
-      return matchesEvent && matchesSection
-    })
+    return repairs
+      .filter((item) => {
+        const matchesEvent = selectedEventId === 'all' || item.rp_event === selectedEventId
+        const matchesSection = selectedSectionId === 'all' || item.rp_section === selectedSectionId
+        return matchesEvent && matchesSection
+      })
+      .sort((a, b) => b.rp_uid - a.rp_uid || b.repair_id - a.repair_id)
   }, [repairs, selectedEventId, selectedSectionId])
 
   const setInitialForm = (data: RepairFormData) => {

@@ -796,7 +796,7 @@ app.get('/api/repairs', async (req, res, next) => {
 				AND (? IS NULL OR r.rp_tryfix = ?)
 				AND (? IS NULL OR r.rp_source = ?)
 				AND (? IS NULL OR r.rp_section = ?)
-			ORDER BY e.ev_date DESC, r.repair_id DESC
+			ORDER BY r.rp_uid DESC, r.repair_id DESC
 			LIMIT ?
 			`,
 			[

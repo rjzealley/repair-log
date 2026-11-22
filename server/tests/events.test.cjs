@@ -12,6 +12,7 @@ process.env.DB_NAME = 'test';
 
 const inserts = [];
 const summaryQueries = [];
+const repairQueries = [];
 const pool = {
   async query(sql, params) {
     if (sql.includes('COUNT(r.repair_id) AS total_repairs')) {
@@ -20,6 +21,10 @@ const pool = {
         { event_id: 3, ev_date: '2026-02-28', venue_name: 'Town Hall', total_repairs: 350, fixed_repairs: 200 },
         { event_id: 2, ev_date: '2026-02-27', venue_name: null, total_repairs: 0, fixed_repairs: 0 },
       ]];
+    }
+    if (sql.includes('INNER JOIN event e')) {
+      repairQueries.push({ sql, params });
+      return [[]];
     }
     if (sql.includes("lk_group = 'venue'")) {
       return [params[0] === 7 ? [{ lookup_id: 7, lk_name: 'Town Hall' }] : []];
@@ -120,6 +125,40 @@ test('summary query includes all repairs and the latest twelve past events', {
     assert.deepEqual(rows.map((row) => row.event_id), [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]);
     assert.deepEqual([rows[0].total_repairs, rows[0].fixed_repairs], [0, 0]);
     assert.deepEqual([rows[1].total_repairs, rows[1].fixed_repairs], [350, 275]);
+  } finally {
+    db.close();
+  }
+});
+
+test('repair list orders by UID before applying its limit', async () => {
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/repairs?limit=3`);
+  assert.equal(response.status, 200);
+  assert.match(repairQueries[0].sql, /ORDER BY r\.rp_uid DESC, r\.repair_id DESC\s+LIMIT \?/);
+});
+
+test('repair ordering uses UID across events and breaks ties by primary key', {
+  skip: !Module.builtinModules.includes('node:sqlite') && 'node:sqlite is unavailable',
+}, () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE event (event_id INTEGER, ev_date TEXT, ev_comment TEXT, ev_venue INTEGER);
+      CREATE TABLE lookup (lookup_id INTEGER, lk_name TEXT, lk_group TEXT);
+      CREATE TABLE repair (
+        repair_id INTEGER, rp_uid INTEGER, rp_event INTEGER, rp_item TEXT, rp_problem TEXT,
+        rp_section INTEGER, rp_source INTEGER, rp_repairer INTEGER, rp_tryfix INTEGER,
+        rp_fixed INTEGER, rp_comments TEXT
+      );
+      INSERT INTO event VALUES (1, '2025-01-01', '', 0), (2, '2026-01-01', '', 0);
+      INSERT INTO repair VALUES
+        (1, 90, 1, 'older event', '', 0, 0, 0, 0, 0, ''),
+        (2, 10, 2, 'newer event', '', 0, 0, 0, 0, 0, ''),
+        (3, 90, 2, 'same UID', '', 0, 0, 0, 0, 0, ''),
+        (4, 2, 2, 'low UID', '', 0, 0, 0, 0, 0, '');
+    `);
+    const rows = db.prepare(repairQueries[0].sql).all(...repairQueries[0].params);
+    assert.deepEqual(rows.map((row) => [row.rp_uid, row.repair_id]), [[90, 3], [90, 1], [10, 2]]);
   } finally {
     db.close();
   }

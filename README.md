@@ -43,7 +43,8 @@ The dashboard is at `/` and the repair log is at `/repairs`. Repair log
 filters are retained in the URL as `event` and `section` query parameters,
 so links, refresh and browser navigation preserve the selection.
 The Unique ID shown in the repair log and form is the repair's `rp_uid`;
-`repair_id` is the internal database key.
+`repair_id` is the internal database key. The repair log is sorted by
+Unique ID in descending order.
 The repair form's **Cancel** button asks for confirmation only when there
 are unsaved changes.
 
