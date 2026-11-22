@@ -26,9 +26,27 @@ expire after 30 minutes and can only be used once.
 ## Adding events
 
 Sign in as an administrator and select **Add Event** on the dashboard. Choose
-the date and an existing venue, and optionally add a comment. The new event
-appears in the dashboard and is available when adding repairs. Venues must
-already exist in the `lookup` table with `lk_group` set to `venue`.
+the date and an existing venue, and optionally add a comment. The dashboard
+shows the seven most recent events up to and including today, using the
+browser's local date. All events remain available in the Repair Log filters
+and when adding repairs. Venues must already exist in the `lookup` table
+with `lk_group` set to `venue`.
+
+The Repair Trends chart shows total and fixed repairs for the twelve most
+recent events up to today. Hover over a month or point for its date; points
+also show the repair count. Event totals include all repairs, not just those
+in the limited repair list.
+
+## Client routing
+
+The dashboard is at `/` and the repair log is at `/repairs`. Repair log
+filters are retained in the URL as `event` and `section` query parameters,
+so links, refresh and browser navigation preserve the selection.
+The repair form's **Cancel** button asks for confirmation before discarding
+the current changes.
+
+The web server must serve `index.html` for client routes. The supplied
+`client/hostinger.htaccess` contains the rewrite rules for Apache hosting.
 
 ## Creating users
 

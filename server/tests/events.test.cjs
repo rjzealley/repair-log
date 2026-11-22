@@ -11,8 +11,16 @@ process.env.DB_PASSWORD = 'test';
 process.env.DB_NAME = 'test';
 
 const inserts = [];
+const summaryQueries = [];
 const pool = {
   async query(sql, params) {
+    if (sql.includes('COUNT(r.repair_id) AS total_repairs')) {
+      summaryQueries.push({ sql, params });
+      return [[
+        { event_id: 3, ev_date: '2026-02-28', venue_name: 'Town Hall', total_repairs: 350, fixed_repairs: 200 },
+        { event_id: 2, ev_date: '2026-02-27', venue_name: null, total_repairs: 0, fixed_repairs: 0 },
+      ]];
+    }
     if (sql.includes("lk_group = 'venue'")) {
       return [params[0] === 7 ? [{ lookup_id: 7, lk_name: 'Town Hall' }] : []];
     }
@@ -67,6 +75,55 @@ const send = async (body, isAdmin) => {
 };
 
 const validEvent = { ev_date: '2026-02-28', ev_venue: 7, ev_comment: '  Monthly event  ' };
+
+test('requires a valid cutoff date for event summaries', async () => {
+  if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+  for (const query of ['', '?toDate=2026-02-29', '?toDate=invalid']) {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/events/summary${query}`);
+    assert.equal(response.status, 400);
+  }
+  assert.equal(summaryQueries.length, 0);
+});
+
+test('returns event totals without the repair list limit', async () => {
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/events/summary?toDate=2026-02-28`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), [
+    { event_id: 3, ev_date: '2026-02-28', venue_name: 'Town Hall', total_repairs: 350, fixed_repairs: 200 },
+    { event_id: 2, ev_date: '2026-02-27', venue_name: null, total_repairs: 0, fixed_repairs: 0 },
+  ]);
+  assert.deepEqual(summaryQueries[0].params, ['2026-02-28']);
+  assert.match(summaryQueries[0].sql, /WHERE ev_date <= \?[\s\S]*ORDER BY ev_date DESC, event_id DESC[\s\S]*LIMIT 12/);
+  assert.match(summaryQueries[0].sql, /LEFT JOIN repair/);
+});
+
+test('summary query includes all repairs and the latest twelve past events', {
+  skip: !Module.builtinModules.includes('node:sqlite') && 'node:sqlite is unavailable',
+}, () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE event (event_id INTEGER, ev_date TEXT, ev_venue INTEGER);
+      CREATE TABLE lookup (lookup_id INTEGER, lk_name TEXT, lk_group TEXT);
+      CREATE TABLE repair (repair_id INTEGER, rp_event INTEGER, rp_fixed INTEGER);
+    `);
+    db.prepare('INSERT INTO lookup VALUES (?, ?, ?)').run(1, 'Town Hall', 'venue');
+    const addEvent = db.prepare('INSERT INTO event VALUES (?, ?, 1)');
+    for (let i = 1; i <= 14; i++) addEvent.run(i, `2026-01-${String(i).padStart(2, '0')}`);
+    addEvent.run(15, '2026-01-14');
+    addEvent.run(16, '2027-01-01');
+    const addRepair = db.prepare('INSERT INTO repair VALUES (?, 14, ?)');
+    for (let i = 1; i <= 350; i++) addRepair.run(i, i <= 275 ? 1 : 0);
+
+    const rows = db.prepare(summaryQueries[0].sql).all('2026-01-14');
+    assert.deepEqual(rows.map((row) => row.event_id), [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]);
+    assert.deepEqual([rows[0].total_repairs, rows[0].fixed_repairs], [0, 0]);
+    assert.deepEqual([rows[1].total_repairs, rows[1].fixed_repairs], [350, 275]);
+  } finally {
+    db.close();
+  }
+});
 
 test('only administrators can add events', async () => {
   assert.equal((await send(validEvent)).status, 401);

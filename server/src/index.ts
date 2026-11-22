@@ -122,6 +122,14 @@ interface EventRow extends RowDataPacket {
 	venue_name: string | null;
 }
 
+interface EventSummaryRow extends RowDataPacket {
+	event_id: number;
+	ev_date: string;
+	venue_name: string | null;
+	total_repairs: number;
+	fixed_repairs: number;
+}
+
 interface RepairRow extends RowDataPacket {
 	repair_id: number;
 	rp_uid: number;
@@ -211,6 +219,12 @@ const parseIntParam = (value: string | undefined, fallback?: number): number | u
 
 	const parsed = Number.parseInt(value, 10);
 	return Number.isNaN(parsed) ? undefined : parsed;
+};
+
+const isValidEventDate = (date: string): boolean => {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < '1000-01-01') return false;
+	const parsed = new Date(`${date}T00:00:00Z`);
+	return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
 };
 
 const parseCsvBoolean = (value: string): number => {
@@ -611,6 +625,39 @@ const selectRepairById = async (repairId: number): Promise<RepairRow | null> => 
 	return rows[0] ?? null;
 };
 
+app.get('/api/events/summary', async (req, res, next) => {
+	const toDate = typeof req.query.toDate === 'string' ? req.query.toDate : '';
+	if (!isValidEventDate(toDate)) {
+		res.status(400).json({ message: 'A valid toDate is required.' });
+		return;
+	}
+
+	try {
+		const [rows] = await pool.query<EventSummaryRow[]>(
+			`
+			SELECT recent.event_id, recent.ev_date, venue.lk_name AS venue_name,
+				COUNT(r.repair_id) AS total_repairs,
+				COUNT(CASE WHEN r.rp_fixed <> 0 THEN 1 END) AS fixed_repairs
+			FROM (
+				SELECT event_id, ev_date, ev_venue
+				FROM event
+				WHERE ev_date <= ?
+				ORDER BY ev_date DESC, event_id DESC
+				LIMIT 12
+			) recent
+			LEFT JOIN lookup venue ON venue.lookup_id = recent.ev_venue AND venue.lk_group = 'venue'
+			LEFT JOIN repair r ON r.rp_event = recent.event_id
+			GROUP BY recent.event_id, recent.ev_date, venue.lk_name
+			ORDER BY recent.ev_date DESC, recent.event_id DESC
+			`,
+			[toDate],
+		);
+		res.json(rows);
+	} catch (error) {
+		next(error);
+	}
+});
+
 app.get('/api/events', async (req, res, next) => {
 	const venueId = parseIntParam(req.query.venueId as string | undefined);
 	const fromDate = (req.query.fromDate as string | undefined) ?? null;
@@ -647,13 +694,9 @@ app.post('/api/events', requireAdmin, async (req, res, next) => {
 	const date = typeof req.body?.ev_date === 'string' ? req.body.ev_date : '';
 	const venueId = req.body?.ev_venue;
 	const comment = typeof req.body?.ev_comment === 'string' ? req.body.ev_comment.trim() : '';
-	const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
 
 	if (
-		!parsedDate
-		|| Number.isNaN(parsedDate.getTime())
-		|| parsedDate.toISOString().slice(0, 10) !== date
-		|| date < '1000-01-01'
+		!isValidEventDate(date)
 		|| !Number.isSafeInteger(venueId)
 		|| venueId <= 0
 		|| (req.body?.ev_comment !== undefined && typeof req.body.ev_comment !== 'string')
