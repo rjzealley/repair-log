@@ -27,9 +27,6 @@ export function DashboardPage({ data, isSignedIn, apiFetch }: Props) {
   const [loadingSummaries, setLoadingSummaries] = useState(true)
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
-  const now = new Date()
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-
   useEffect(() => {
     if (loading || error) return
 
@@ -51,10 +48,9 @@ export function DashboardPage({ data, isSignedIn, apiFetch }: Props) {
 
     void loadSummaries()
     return () => controller.abort()
-  }, [apiFetch, today, events, loading, error])
+  }, [apiFetch, events, loading, error])
 
   const openRepairsForEvent = (eventId: number) => navigate(`/repairs?event=${eventId}`)
-  const pastEventSummaries = eventSummaries.filter((event) => event.ev_date.slice(0, 10) <= today)
 
   const openAddEventDialog = async () => {
     setEventDate('')
@@ -156,10 +152,10 @@ export function DashboardPage({ data, isSignedIn, apiFetch }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {pastEventSummaries.length === 0 && (
-                    <tr><td colSpan={5}>No past events found.</td></tr>
+                  {eventSummaries.length === 0 && (
+                    <tr><td colSpan={5}>No events found.</td></tr>
                   )}
-                  {pastEventSummaries.slice(0, 7).map((event) => (
+                  {eventSummaries.slice(0, 7).map((event) => (
                     <tr key={event.event_id} className="dashboard-event-row" onClick={() => openRepairsForEvent(event.event_id)}>
                       <td>
                         <button type="button" className="dashboard-event-link" aria-label={`Open repairs for ${formatDate(event.ev_date)} at ${event.venue_name ?? 'Unknown venue'}`}>

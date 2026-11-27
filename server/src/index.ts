@@ -1051,15 +1051,12 @@ app.get('/api/repairs', async (req, res, next) => {
 	const tryfix = parseIntParam(req.query.tryfix as string | undefined);
 	const sourceId = parseIntParam(req.query.sourceId as string | undefined);
 	const sectionId = parseIntParam(req.query.sectionId as string | undefined);
-	const limit = parseIntParam(req.query.limit as string | undefined, 100) ?? 100;
-
 	const hasInvalidNumberParam =
 		(req.query.eventId && eventId === undefined) ||
 		(req.query.fixed && fixed === undefined) ||
 		(req.query.tryfix && tryfix === undefined) ||
 		(req.query.sourceId && sourceId === undefined) ||
-		(req.query.sectionId && sectionId === undefined) ||
-		(req.query.limit && !Number.isFinite(limit));
+		(req.query.sectionId && sectionId === undefined);
 
 	if (hasInvalidNumberParam) {
 		res.status(400).json({ message: 'One or more numeric query params are invalid.' });
@@ -1109,7 +1106,6 @@ app.get('/api/repairs', async (req, res, next) => {
 				AND (? IS NULL OR r.rp_source = ?)
 				AND (? IS NULL OR r.rp_section = ?)
 			ORDER BY r.rp_uid DESC, r.repair_id DESC
-			LIMIT ?
 			`,
 			[
 				eventId ?? null,
@@ -1122,7 +1118,6 @@ app.get('/api/repairs', async (req, res, next) => {
 				sourceId ?? null,
 				sectionId ?? null,
 				sectionId ?? null,
-				Math.max(1, Math.min(limit, 1000)),
 			],
 		);
 

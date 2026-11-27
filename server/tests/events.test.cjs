@@ -13,6 +13,7 @@ process.env.DB_NAME = 'test';
 const inserts = [];
 const summaryQueries = [];
 const repairQueries = [];
+let executeRepairQuery;
 const pool = {
   async query(sql, params) {
     if (sql.includes('SELECT loguser_id, lu_admin FROM logusers')) {
@@ -27,7 +28,7 @@ const pool = {
     }
     if (sql.includes('INNER JOIN event e')) {
       repairQueries.push({ sql, params });
-      return [[]];
+      return [executeRepairQuery ? executeRepairQuery(sql, params) : []];
     }
     if (sql.includes("lk_group = 'venue'")) {
       return [params[0] === 7 ? [{ lookup_id: 7, lk_name: 'Town Hall' }] : []];
@@ -93,7 +94,7 @@ test('requires a valid cutoff date for event summaries', async () => {
   assert.equal(summaryQueries.length, 0);
 });
 
-test('returns event totals without the repair list limit', async () => {
+test('returns event totals', async () => {
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/events/summary?toDate=2026-02-28`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), [
@@ -135,10 +136,11 @@ test('summary query includes all repairs and all events up to the cutoff', {
   }
 });
 
-test('repair list orders by UID before applying its limit', async () => {
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/repairs?limit=3`);
+test('repair list orders by UID without a limit', async () => {
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/repairs`);
   assert.equal(response.status, 200);
-  assert.match(repairQueries[0].sql, /ORDER BY r\.rp_uid DESC, r\.repair_id DESC\s+LIMIT \?/);
+  assert.match(repairQueries[0].sql, /ORDER BY r\.rp_uid DESC, r\.repair_id DESC/);
+  assert.doesNotMatch(repairQueries[0].sql, /\bLIMIT\b/i);
 });
 
 test('repair ordering uses UID across events and breaks ties by primary key', {
@@ -163,8 +165,45 @@ test('repair ordering uses UID across events and breaks ties by primary key', {
         (4, 2, 2, 'low UID', '', 0, 0, 0, 0, 0, '');
     `);
     const rows = db.prepare(repairQueries[0].sql).all(...repairQueries[0].params);
-    assert.deepEqual(rows.map((row) => [row.rp_uid, row.repair_id]), [[90, 3], [90, 1], [10, 2]]);
+    assert.deepEqual(rows.map((row) => [row.rp_uid, row.repair_id]), [[90, 3], [90, 1], [10, 2], [2, 4]]);
   } finally {
+    db.close();
+  }
+});
+
+test('returns more than 1000 repairs and retains event and fixed filters', {
+  skip: !Module.builtinModules.includes('node:sqlite') && 'node:sqlite is unavailable',
+}, async () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE event (event_id INTEGER, ev_date TEXT, ev_comment TEXT, ev_venue INTEGER);
+      CREATE TABLE lookup (lookup_id INTEGER, lk_name TEXT, lk_group TEXT);
+      CREATE TABLE repair (
+        repair_id INTEGER, rp_uid INTEGER, rp_event INTEGER, rp_item TEXT, rp_problem TEXT,
+        rp_section INTEGER, rp_source INTEGER, rp_repairer INTEGER, rp_tryfix INTEGER,
+        rp_fixed INTEGER, rp_comments TEXT
+      );
+      INSERT INTO event VALUES (1, '2026-01-01', '', 0), (2, '2026-02-01', '', 0);
+    `);
+    const insert = db.prepare('INSERT INTO repair VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (let id = 1; id <= 1201; id++) {
+      insert.run(id, id, id % 2 + 1, 'Item', '', 0, 0, 0, 0, id % 2, '');
+    }
+    executeRepairQuery = (sql, params) => db.prepare(sql).all(...params);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/repairs`);
+    const rows = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(rows.length, 1201);
+    assert.equal(rows[0].rp_uid, 1201);
+    assert.equal(rows.at(-1).rp_uid, 1);
+    const filtered = await fetch(`http://127.0.0.1:${server.address().port}/api/repairs?eventId=2&fixed=1`);
+    const filteredRows = await filtered.json();
+    assert.equal(filteredRows.length, 601);
+    assert.ok(filteredRows.every((row) => row.rp_event === 2 && row.rp_fixed === 1));
+  } finally {
+    executeRepairQuery = undefined;
     db.close();
   }
 });

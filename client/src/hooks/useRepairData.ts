@@ -27,7 +27,7 @@ export function useRepairData(apiFetch: ApiFetch) {
     try {
       const [eventsResponse, repairsResponse] = await Promise.all([
         apiFetch(`${apiBase}/api/events`),
-        apiFetch(`${apiBase}/api/repairs?limit=250`),
+        apiFetch(`${apiBase}/api/repairs`),
       ])
       checkSession(eventsResponse, repairsResponse)
 

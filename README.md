@@ -28,8 +28,8 @@ expire after 30 minutes and can only be used once.
 
 Sign in and select **Add Event** on the dashboard. Choose
 the date and an existing venue, and optionally add a comment. The dashboard
-shows the seven most recent events up to and including today, using the
-browser's local date. All events remain available in the Repair Log filters
+shows up to seven events with the latest dates, including future events and
+events with no repairs. All events remain available in the Repair Log filters
 and when adding repairs. Venues must already exist in the `lookup` table
 with `lk_group` set to `venue`.
 
@@ -37,8 +37,7 @@ The Repair Trends chart shows total and fixed repairs for all events in the
 selected calendar year, including future events. The year filter lists years
 with events and defaults to the current year when available, or the latest
 year otherwise. Hover over a date label or point for its full date; points also show
-the repair count. Event totals include all repairs, not just those in the
-limited repair list.
+the repair count. The dashboard totals and Repair Log include all repairs.
 
 ## Client routing
 
