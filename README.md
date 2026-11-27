@@ -4,6 +4,7 @@
 
 The API uses JWT bearer tokens and bcrypt password hashes. Set a long random
 `JWT_SECRET` in `server/.env` before starting the server.
+Signing in or out returns the user to the dashboard.
 
 Password reset links are sent through SMTP. Configure these variables in
 `server/.env` to enable the reset flow:
@@ -25,7 +26,7 @@ expire after 30 minutes and can only be used once.
 
 ## Adding events
 
-Sign in as an administrator and select **Add Event** on the dashboard. Choose
+Sign in and select **Add Event** on the dashboard. Choose
 the date and an existing venue, and optionally add a comment. The dashboard
 shows the seven most recent events up to and including today, using the
 browser's local date. All events remain available in the Repair Log filters
@@ -56,6 +57,8 @@ including header records. Lookups used by an event or repair cannot be deleted,
 moved to another group, or made into a header. Administrators cannot delete
 their own account or remove their own administrator access. Administrator
 permissions are checked against the database for protected actions.
+Any signed-in user can add events and repairs; editing or deleting repairs
+and importing CSV files remain administrator-only.
 
 The web server must serve `index.html` for client routes. The supplied
 `client/hostinger.htaccess` contains the rewrite rules for Apache hosting.

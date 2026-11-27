@@ -6,11 +6,12 @@ import { RepairLogPage } from './pages/RepairLogPage'
 import { AdminPage } from './pages/AdminPage'
 
 interface Props {
+  isSignedIn: boolean
   isAdmin: boolean
   apiFetch: ApiFetch
 }
 
-export function AppRoutes({ isAdmin, apiFetch }: Props) {
+export function AppRoutes({ isSignedIn, isAdmin, apiFetch }: Props) {
   const data = useRepairData(apiFetch)
   const navigate = useNavigate()
   const isDashboard = useMatch('/')
@@ -27,8 +28,8 @@ export function AppRoutes({ isAdmin, apiFetch }: Props) {
       {(isDashboard || isRepairs) && data.loading && <p className="status">Loading repairs...</p>}
       {(isDashboard || isRepairs) && !data.loading && data.error && <p className="status error" role="alert">{data.error}</p>}
       <Routes>
-        <Route path="/" element={<DashboardPage data={data} isAdmin={isAdmin} apiFetch={apiFetch} />} />
-        <Route path="/repairs" element={<RepairLogPage data={data} isAdmin={isAdmin} apiFetch={apiFetch} />} />
+        <Route path="/" element={<DashboardPage data={data} isSignedIn={isSignedIn} apiFetch={apiFetch} />} />
+        <Route path="/repairs" element={<RepairLogPage data={data} isSignedIn={isSignedIn} isAdmin={isAdmin} apiFetch={apiFetch} />} />
         <Route path="/admin" element={isAdmin
           ? <AdminPage apiFetch={apiFetch} reloadRepairData={data.loadData} />
           : <p className="status error" role="alert">Administrator access is required.</p>} />

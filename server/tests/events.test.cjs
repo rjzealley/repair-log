@@ -169,9 +169,8 @@ test('repair ordering uses UID across events and breaks ties by primary key', {
   }
 });
 
-test('only administrators can add events', async () => {
+test('requires authentication to add events', async () => {
   assert.equal((await send(validEvent)).status, 401);
-  assert.equal((await send(validEvent, false)).status, 403);
   assert.equal(inserts.length, 0);
 });
 
@@ -206,4 +205,10 @@ test('allows an optional comment and a leap-day date', async () => {
   assert.equal(response.status, 201);
   assert.equal((await response.json()).ev_comment, '');
   assert.deepEqual(inserts[1], ['2028-02-29', 7, '']);
+});
+
+test('allows a signed-in non-administrator to add an event', async () => {
+  const response = await send(validEvent, false);
+  assert.equal(response.status, 201);
+  assert.deepEqual(inserts[2], ['2026-02-28', 7, 'Monthly event']);
 });

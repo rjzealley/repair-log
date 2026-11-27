@@ -495,10 +495,10 @@ app.use('/api', (req, res, next) => {
 	}
 });
 
-const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const requireUser = (adminOnly: boolean) => async (req: express.Request, res: express.Response, next: express.NextFunction) => {
 	const auth = (req as AuthenticatedRequest).auth;
 	if (!auth) {
-		res.status(401).json({ message: 'Administrator authentication required.' });
+		res.status(401).json({ message: adminOnly ? 'Administrator authentication required.' : 'Authentication required.' });
 		return;
 	}
 
@@ -508,7 +508,7 @@ const requireAdmin = async (req: express.Request, res: express.Response, next: e
 			res.status(401).json({ message: 'Your account no longer exists. Please sign in again.' });
 			return;
 		}
-		if (!rows[0].lu_admin) {
+		if (adminOnly && !rows[0].lu_admin) {
 			res.status(403).json({ message: 'Administrator access required.' });
 			return;
 		}
@@ -517,6 +517,8 @@ const requireAdmin = async (req: express.Request, res: express.Response, next: e
 		next(error);
 	}
 };
+const requireAuthenticated = requireUser(false);
+const requireAdmin = requireUser(true);
 
 const adminId = (value: string | string[] | undefined): number | undefined => {
 	if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined;
@@ -961,7 +963,7 @@ const selectEventVenue = async (venueId: number) => {
 	return venues[0];
 };
 
-app.post('/api/events', requireAdmin, async (req, res, next) => {
+app.post('/api/events', requireAuthenticated, async (req, res, next) => {
 	const payload = parseEventPayload(req.body);
 	if (!payload) {
 		res.status(400).json({ message: 'A valid date, venue, and comment of at most 255 characters are required.' });
@@ -1331,7 +1333,7 @@ app.get('/api/repairs/:id', async (req, res, next) => {
 	}
 });
 
-app.post('/api/repairs', requireAdmin, async (req, res, next) => {
+app.post('/api/repairs', requireAuthenticated, async (req, res, next) => {
 	const payload = parseRepairPayload(req.body);
 
 	if (!payload) {

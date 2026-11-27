@@ -8,6 +8,7 @@ import { formatDate, parseOptionalNumber } from '../utils'
 
 interface Props {
   data: RepairData
+  isSignedIn: boolean
   isAdmin: boolean
   apiFetch: ApiFetch
 }
@@ -18,7 +19,7 @@ function parseFilter(value: string | null): number | 'all' | null {
   return Number(value)
 }
 
-export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
+export function RepairLogPage({ data, isSignedIn, isAdmin, apiFetch }: Props) {
   const { repairs, setRepairs, events, sources, sections, repairers, loading, error, maxRpUid, setMaxRpUid, loadData } = data
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedEventId = parseFilter(searchParams.get('event'))
@@ -275,15 +276,15 @@ export function RepairLogPage({ data, isAdmin, apiFetch }: Props) {
                 </option>
               ))}
             </select>
+            {isSignedIn && (
+              <button type="button" className="add-button" onClick={openAddDialog}>
+                Add Repair
+              </button>
+            )}
             {isAdmin && (
-              <>
-                <button type="button" className="add-button" onClick={openAddDialog}>
-                  Add Repair
-                </button>
-                <button type="button" className="import-button" onClick={handleImportCsv} disabled={importing}>
-                  {importing ? 'Importing...' : 'Import CSV'}
-                </button>
-              </>
+              <button type="button" className="import-button" onClick={handleImportCsv} disabled={importing}>
+                {importing ? 'Importing...' : 'Import CSV'}
+              </button>
             )}
           </section>
 

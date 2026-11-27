@@ -8,11 +8,11 @@ import { formatDate } from '../utils'
 
 interface Props {
   data: RepairData
-  isAdmin: boolean
+  isSignedIn: boolean
   apiFetch: ApiFetch
 }
 
-export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
+export function DashboardPage({ data, isSignedIn, apiFetch }: Props) {
   const { events, setEvents, repairs, loading, error } = data
   const navigate = useNavigate()
   const [isEventModalOpen, setIsEventModalOpen] = useState(false)
@@ -133,7 +133,7 @@ export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
             <div className="dashboard-events-header">
               <div className="dashboard-events-title">
                 <h2>Events Summary</h2>
-                {isAdmin && (
+                {isSignedIn && (
                   <button type="button" className="add-button" onClick={() => { void openAddEventDialog() }}>
                     Add Event
                   </button>

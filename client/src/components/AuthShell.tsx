@@ -6,7 +6,7 @@ import type { ApiFetch, AuthUser } from '../types'
 import logoOnly from '../assets/Logo_only_trans.png'
 
 interface Props {
-  children: (isAdmin: boolean, apiFetch: ApiFetch) => ReactNode
+  children: (isSignedIn: boolean, isAdmin: boolean, apiFetch: ApiFetch) => ReactNode
 }
 
 export function AuthShell({ children }: Props) {
@@ -75,6 +75,7 @@ export function AuthShell({ children }: Props) {
       setAuthUser(user)
       setIsLoginOpen(false)
       setLoginPassword('')
+      navigate('/')
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Login failed.')
     } finally {
@@ -210,6 +211,7 @@ export function AuthShell({ children }: Props) {
                   window.localStorage.removeItem('repair-log-user')
                   setToken(null)
                   setAuthUser(null)
+                  navigate('/')
                 }}
               >
                 Sign out
@@ -222,7 +224,7 @@ export function AuthShell({ children }: Props) {
           )}
         </div>
       </header>
-      {children(authUser?.isAdmin === true, apiFetch)}
+      {children(Boolean(token), Boolean(token) && authUser?.isAdmin === true, apiFetch)}
 
       {isLoginOpen && (
         <div className="modal-backdrop" role="presentation" onClick={() => { setIsLoginOpen(false); setIsForgotPassword(false) }}>

@@ -6,7 +6,7 @@ import './App.css'
 function App() {
   return (
     <BrowserRouter>
-      <AuthShell>{(isAdmin, apiFetch) => <AppRoutes isAdmin={isAdmin} apiFetch={apiFetch} />}</AuthShell>
+      <AuthShell>{(isSignedIn, isAdmin, apiFetch) => <AppRoutes isSignedIn={isSignedIn} isAdmin={isAdmin} apiFetch={apiFetch} />}</AuthShell>
     </BrowserRouter>
   )
 }

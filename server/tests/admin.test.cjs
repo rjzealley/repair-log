@@ -14,7 +14,10 @@ if (!Module.builtinModules.includes('node:sqlite')) {
     CREATE TABLE password_reset_tokens (user_id INTEGER, token_hash TEXT);
     CREATE TABLE lookup (lookup_id INTEGER PRIMARY KEY, lk_group TEXT, lk_name TEXT, lk_seq INTEGER, lk_header INTEGER);
     CREATE TABLE event (event_id INTEGER PRIMARY KEY, ev_date TEXT, ev_venue INTEGER, ev_comment TEXT);
-    CREATE TABLE repair (repair_id INTEGER, rp_section INTEGER, rp_source INTEGER, rp_repairer INTEGER, rp_event INTEGER);
+    CREATE TABLE repair (
+      repair_id INTEGER PRIMARY KEY, rp_uid INTEGER, rp_event INTEGER, rp_item TEXT, rp_problem TEXT,
+      rp_section INTEGER, rp_source INTEGER, rp_repairer INTEGER, rp_tryfix INTEGER, rp_fixed INTEGER, rp_comments TEXT
+    );
     INSERT INTO logusers VALUES
       (1, 'Admin', 'admin@example.com', 1, 'secret-hash'),
       (2, 'User', 'user@example.com', 0, 'secret-hash'),
@@ -25,7 +28,7 @@ if (!Module.builtinModules.includes('node:sqlite')) {
       (3, 'source', 'Visitor', 1, 0), (4, 'repairer', 'Volunteer', 1, 0),
       (5, 'section', 'Unused', 2, 0), (6, 'section', 'Heading', 3, 1);
     INSERT INTO event VALUES (1, '2026-01-01', 1, 'Initial');
-    INSERT INTO repair VALUES (1, 2, 3, 4, 1);
+    INSERT INTO repair VALUES (1, 10, 1, 'Lamp', 'Broken', 2, 3, 4, 1, 1, '');
   `);
 
   const query = async (sql, params = []) => {
@@ -85,10 +88,11 @@ if (!Module.builtinModules.includes('node:sqlite')) {
     db.close();
   });
 
-  const send = async (path, { userId, claimedAdmin = true, method = 'GET', body } = {}) => {
+  const send = async (path, { userId, token, claimedAdmin = true, method = 'GET', body } = {}) => {
     if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
     const headers = { 'Content-Type': 'application/json' };
-    if (userId) headers.Authorization = `Bearer ${jwt.sign({ userId, email: 'test@example.com', isAdmin: claimedAdmin }, secret)}`;
+    if (token) headers.Authorization = `Bearer ${token}`;
+    else if (userId) headers.Authorization = `Bearer ${jwt.sign({ userId, email: 'test@example.com', isAdmin: claimedAdmin }, secret)}`;
     return fetch(`http://127.0.0.1:${server.address().port}${path}`, {
       method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -97,15 +101,29 @@ if (!Module.builtinModules.includes('node:sqlite')) {
   test('admin endpoints require a current administrator, not just a JWT claim', async () => {
     for (const [path, method] of [
       ['/api/admin/users', 'GET'], ['/api/admin/users/2', 'PUT'], ['/api/admin/users/2', 'DELETE'],
-      ['/api/admin/users', 'POST'], ['/api/admin/lookups', 'POST'], ['/api/events', 'POST'],
+      ['/api/admin/users', 'POST'], ['/api/admin/lookups', 'POST'],
       ['/api/admin/events/1', 'PUT'], ['/api/admin/events/1', 'DELETE'],
       ['/api/admin/lookups', 'GET'], ['/api/admin/lookup-groups', 'GET'],
       ['/api/admin/lookups/5', 'PUT'], ['/api/admin/lookups/5', 'DELETE'],
+      ['/api/repairs/1', 'PUT'], ['/api/repairs/1', 'DELETE'], ['/api/import/repairs-csv', 'POST'],
     ]) {
       assert.equal((await send(path, { method })).status, 401);
       assert.equal((await send(path, { userId: 2, method })).status, 403);
     }
     assert.equal((await send('/api/admin/users', { userId: 999 })).status, 401);
+  });
+
+  test('signed-in users can add events and repairs, but anonymous, expired and deleted accounts cannot', async () => {
+    const event = { ev_date: '2027-01-14', ev_venue: 1, ev_comment: 'New event' };
+    const repair = { rp_event: 1, rp_item: 'Radio', rp_problem: 'Broken', rp_section: 2, rp_source: 3, rp_repairer: 4, rp_tryfix: 0, rp_fixed: 0, rp_comments: '' };
+    const expired = jwt.sign({ userId: 2, email: 'user@example.com', isAdmin: false }, secret, { expiresIn: -1 });
+    for (const [path, body] of [['/api/events', event], ['/api/repairs', repair]]) {
+      assert.equal((await send(path, { method: 'POST', body })).status, 401);
+      assert.equal((await send(path, { token: expired, method: 'POST', body })).status, 401);
+      assert.equal((await send(path, { userId: 999, method: 'POST', body })).status, 401);
+      assert.equal((await send(path, { userId: 2, claimedAdmin: false, method: 'POST', body })).status, 201);
+      assert.equal((await send(path, { userId: 1, method: 'POST', body })).status, 201);
+    }
   });
 
   test('lists users without password hashes and lists all lookup groups and records', async () => {
@@ -135,7 +153,7 @@ if (!Module.builtinModules.includes('node:sqlite')) {
     const body = { lu_name: 'Other Admin', lu_email: 'other@example.com', lu_admin: false };
     assert.equal((await send('/api/admin/users/3', { userId: 1, method: 'PUT', body })).status, 200);
     assert.equal((await send('/api/admin/users', { userId: 3 })).status, 403);
-    assert.equal((await send('/api/events', { userId: 3, method: 'POST', body: {} })).status, 403);
+    assert.equal((await send('/api/admin/events/1', { userId: 3, method: 'PUT', body: {} })).status, 403);
     assert.equal((await send('/api/admin/users/2', { userId: 1, method: 'DELETE' })).status, 204);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM password_reset_tokens WHERE user_id = 2').get().count, 0);
     assert.equal((await send('/api/admin/users', { userId: 2 })).status, 401);
