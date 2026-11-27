@@ -24,6 +24,10 @@ export interface EventRecord {
   venue_name: string | null
 }
 
+export interface AdminEvent extends EventRecord {
+  ev_venue: number
+}
+
 export interface EventSummary {
   event_id: number
   ev_date: string
@@ -35,6 +39,19 @@ export interface EventSummary {
 export interface LookupRecord {
   lookup_id: number
   lk_name: string
+}
+
+export interface AdminUser {
+  loguser_id: number
+  lu_name: string
+  lu_email: string
+  lu_admin: number
+}
+
+export interface AdminLookup extends LookupRecord {
+  lk_group: string
+  lk_seq: number
+  lk_header: number
 }
 
 export interface RepairFormData {

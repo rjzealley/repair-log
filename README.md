@@ -32,10 +32,12 @@ browser's local date. All events remain available in the Repair Log filters
 and when adding repairs. Venues must already exist in the `lookup` table
 with `lk_group` set to `venue`.
 
-The Repair Trends chart shows total and fixed repairs for the twelve most
-recent events up to today. Hover over a month or point for its date; points
-also show the repair count. Event totals include all repairs, not just those
-in the limited repair list.
+The Repair Trends chart shows total and fixed repairs for all events in the
+selected calendar year, including future events. The year filter lists years
+with events and defaults to the current year when available, or the latest
+year otherwise. Hover over a date label or point for its full date; points also show
+the repair count. Event totals include all repairs, not just those in the
+limited repair list.
 
 ## Client routing
 
@@ -48,23 +50,22 @@ Unique ID in descending order.
 The repair form's **Cancel** button asks for confirmation only when there
 are unsaved changes.
 
+Administrators can use **Admin** to add, edit or delete events, users and
+lookups. Events with repairs cannot be deleted. Lookup groups can be filtered,
+including header records. Lookups used by an event or repair cannot be deleted,
+moved to another group, or made into a header. Administrators cannot delete
+their own account or remove their own administrator access. Administrator
+permissions are checked against the database for protected actions.
+
 The web server must serve `index.html` for client routes. The supplied
 `client/hostinger.htaccess` contains the rewrite rules for Apache hosting.
 
 ## Creating users
 
-Create a user by generating a bcrypt hash from the server directory:
-
-```powershell
-node -e "const bcrypt=require('bcryptjs'); bcrypt.hash('your-password', 12).then(console.log)"
-```
-
-Then insert the generated hash into `logusers`:
-
-```sql
-INSERT INTO logusers (lu_email, lu_password, lu_admin)
-VALUES ('user@example.com', '<bcrypt-hash>', 0);
-```
+An administrator can add a user on the **Users** tab of **Admin**, setting an
+initial password of at least 12 characters and no more than 72 UTF-8 bytes.
+The password is stored as a bcrypt hash. Subsequent password changes use the
+password reset flow.
 
 Run the API and client separately during development:
 

@@ -15,6 +15,9 @@ const summaryQueries = [];
 const repairQueries = [];
 const pool = {
   async query(sql, params) {
+    if (sql.includes('SELECT loguser_id, lu_admin FROM logusers')) {
+      return [[{ loguser_id: params[0], lu_admin: params[0] === 1 ? 1 : 0 }]];
+    }
     if (sql.includes('COUNT(r.repair_id) AS total_repairs')) {
       summaryQueries.push({ sql, params });
       return [[
@@ -70,7 +73,7 @@ const send = async (body, isAdmin) => {
   if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
   const headers = { 'Content-Type': 'application/json' };
   if (isAdmin !== undefined) {
-    headers.Authorization = `Bearer ${jwt.sign({ userId: 1, email: 'user@example.com', isAdmin }, secret)}`;
+    headers.Authorization = `Bearer ${jwt.sign({ userId: isAdmin ? 1 : 2, email: 'user@example.com', isAdmin }, secret)}`;
   }
   return fetch(`http://127.0.0.1:${server.address().port}/api/events`, {
     method: 'POST',
@@ -98,11 +101,12 @@ test('returns event totals without the repair list limit', async () => {
     { event_id: 2, ev_date: '2026-02-27', venue_name: null, total_repairs: 0, fixed_repairs: 0 },
   ]);
   assert.deepEqual(summaryQueries[0].params, ['2026-02-28']);
-  assert.match(summaryQueries[0].sql, /WHERE ev_date <= \?[\s\S]*ORDER BY ev_date DESC, event_id DESC[\s\S]*LIMIT 12/);
+  assert.match(summaryQueries[0].sql, /WHERE ev_date <= \?[\s\S]*ORDER BY ev_date DESC, event_id DESC/);
+  assert.doesNotMatch(summaryQueries[0].sql, /LIMIT\s+\d+/);
   assert.match(summaryQueries[0].sql, /LEFT JOIN repair/);
 });
 
-test('summary query includes all repairs and the latest twelve past events', {
+test('summary query includes all repairs and all events up to the cutoff', {
   skip: !Module.builtinModules.includes('node:sqlite') && 'node:sqlite is unavailable',
 }, () => {
   const { DatabaseSync } = require('node:sqlite');
@@ -122,9 +126,10 @@ test('summary query includes all repairs and the latest twelve past events', {
     for (let i = 1; i <= 350; i++) addRepair.run(i, i <= 275 ? 1 : 0);
 
     const rows = db.prepare(summaryQueries[0].sql).all('2026-01-14');
-    assert.deepEqual(rows.map((row) => row.event_id), [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4]);
+    assert.deepEqual(rows.map((row) => row.event_id), [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     assert.deepEqual([rows[0].total_repairs, rows[0].fixed_repairs], [0, 0]);
     assert.deepEqual([rows[1].total_repairs, rows[1].fixed_repairs], [350, 275]);
+    assert.equal(db.prepare(summaryQueries[0].sql).all('9999-12-31')[0].event_id, 16);
   } finally {
     db.close();
   }

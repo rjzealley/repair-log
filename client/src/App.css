@@ -106,9 +106,64 @@
 }
 
 .user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.admin-link {
+  color: #334155;
+  font-size: 0.8rem;
+}
+
+.admin-page {
   display: grid;
-  justify-items: end;
-  gap: 0.1rem;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.admin-tabs button[aria-selected='true'] {
+  font-weight: 700;
+  border-bottom: 3px solid #1d4ed8;
+}
+
+.admin-table {
+  min-width: 600px;
+}
+
+.admin-group-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-add-link {
+  margin-bottom: 0.75rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.admin-edit-modal {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .page-heading h1 {
@@ -208,6 +263,22 @@
 .stat-card > .trend-message {
   font-size: 0.95rem;
   font-weight: 400;
+}
+
+.trend-card {
+  min-width: 0;
+}
+
+.trend-year {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.trend-chart-scroll {
+  overflow-x: auto;
 }
 
 .trend-legend {

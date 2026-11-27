@@ -38,7 +38,7 @@ export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
       setLoadingSummaries(true)
       setSummaryError(null)
       try {
-        const response = await apiFetch(`${apiBase}/api/events/summary?toDate=${encodeURIComponent(today)}`, { signal: controller.signal })
+        const response = await apiFetch(`${apiBase}/api/events/summary?toDate=9999-12-31`, { signal: controller.signal })
         if (!response.ok) throw new Error('Unable to load event totals.')
         const summaries: EventSummary[] = await response.json()
         if (!controller.signal.aborted) setEventSummaries(summaries)
@@ -54,6 +54,7 @@ export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
   }, [apiFetch, today, events, loading, error])
 
   const openRepairsForEvent = (eventId: number) => navigate(`/repairs?event=${eventId}`)
+  const pastEventSummaries = eventSummaries.filter((event) => event.ev_date.slice(0, 10) <= today)
 
   const openAddEventDialog = async () => {
     setEventDate('')
@@ -155,10 +156,10 @@ export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {eventSummaries.length === 0 && (
+                  {pastEventSummaries.length === 0 && (
                     <tr><td colSpan={5}>No past events found.</td></tr>
                   )}
-                  {eventSummaries.slice(0, 7).map((event) => (
+                  {pastEventSummaries.slice(0, 7).map((event) => (
                     <tr key={event.event_id} className="dashboard-event-row" onClick={() => openRepairsForEvent(event.event_id)}>
                       <td>
                         <button type="button" className="dashboard-event-link" aria-label={`Open repairs for ${formatDate(event.ev_date)} at ${event.venue_name ?? 'Unknown venue'}`}>
@@ -175,7 +176,7 @@ export function DashboardPage({ data, isAdmin, apiFetch }: Props) {
               </table>
             )}
           </div>
-          <div className="stat-card">
+          <div className="stat-card trend-card">
             <h3>Repair Trends</h3>
             {loadingSummaries && <p className="trend-message">Loading event totals...</p>}
             {!loadingSummaries && summaryError && <p className="trend-message" role="alert">{summaryError}</p>}

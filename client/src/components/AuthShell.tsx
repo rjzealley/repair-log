@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiBase } from '../api'
 import type { ApiFetch, AuthUser } from '../types'
 import logoOnly from '../assets/Logo_only_trans.png'
@@ -201,6 +201,7 @@ export function AuthShell({ children }: Props) {
           {token ? (
             <div className="user-actions">
               <span>{authUser?.luName ?? 'User'}</span>
+              {authUser?.isAdmin && <Link className="admin-link" to="/admin">Admin</Link>}
               <button
                 type="button"
                 className="logout-button"

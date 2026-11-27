@@ -495,20 +495,266 @@ app.use('/api', (req, res, next) => {
 	}
 });
 
-const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
 	const auth = (req as AuthenticatedRequest).auth;
 	if (!auth) {
 		res.status(401).json({ message: 'Administrator authentication required.' });
 		return;
 	}
 
-	if (!auth.isAdmin) {
-		res.status(403).json({ message: 'Administrator access required.' });
+	try {
+		const [rows] = await pool.query<LoguserRow[]>('SELECT loguser_id, lu_admin FROM logusers WHERE loguser_id = ? LIMIT 1', [auth.userId]);
+		if (!rows[0]) {
+			res.status(401).json({ message: 'Your account no longer exists. Please sign in again.' });
+			return;
+		}
+		if (!rows[0].lu_admin) {
+			res.status(403).json({ message: 'Administrator access required.' });
+			return;
+		}
+		next();
+	} catch (error) {
+		next(error);
+	}
+};
+
+const adminId = (value: string | string[] | undefined): number | undefined => {
+	if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined;
+	const id = Number(value);
+	return Number.isSafeInteger(id) ? id : undefined;
+};
+
+const parseAdminUser = (body: { lu_name?: unknown; lu_email?: unknown; lu_admin?: unknown }) => {
+	const name = typeof body?.lu_name === 'string' ? body.lu_name.trim() : '';
+	const email = typeof body?.lu_email === 'string' ? body.lu_email.trim().toLowerCase() : '';
+	const isAdmin = body?.lu_admin;
+	if (!name || name.length > 255 || email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof isAdmin !== 'boolean') return null;
+	return { name, email, isAdmin };
+};
+
+app.post('/api/admin/users', requireAdmin, async (req, res, next) => {
+	const user = parseAdminUser(req.body);
+	const password = typeof req.body?.password === 'string' ? req.body.password : '';
+	if (!user || password.length < 12 || bcrypt.truncates(password)) {
+		res.status(400).json({ message: 'A valid name, email, administrator status and password of at least 12 characters and at most 72 UTF-8 bytes are required.' });
 		return;
 	}
+	try {
+		const [existing] = await pool.query<LoguserRow[]>('SELECT loguser_id FROM logusers WHERE lu_email = ? LIMIT 1', [user.email]);
+		if (existing.length > 0) {
+			res.status(409).json({ message: 'A user with that email already exists.' });
+			return;
+		}
+		const passwordHash = await bcrypt.hash(password, 12);
+		const [result] = await pool.execute<ResultSetHeader>(
+			'INSERT INTO logusers (lu_name, lu_email, lu_admin, lu_password) VALUES (?, ?, ?, ?)',
+			[user.name, user.email, user.isAdmin ? 1 : 0, passwordHash],
+		);
+		res.status(201).json({ loguser_id: result.insertId, lu_name: user.name, lu_email: user.email, lu_admin: user.isAdmin ? 1 : 0 });
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ER_DUP_ENTRY') {
+			res.status(409).json({ message: 'A user with that email already exists.' });
+			return;
+		}
+		next(error);
+	}
+});
 
-	next();
+app.get('/api/admin/users', requireAdmin, async (_req, res, next) => {
+	try {
+		const [rows] = await pool.query<LoguserRow[]>(
+			'SELECT loguser_id, lu_name, lu_email, lu_admin FROM logusers ORDER BY lu_name, loguser_id',
+		);
+		res.json(rows);
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.put('/api/admin/users/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	const user = parseAdminUser(req.body);
+	if (!id || !user) {
+		res.status(400).json({ message: 'A valid name, email and administrator status are required.' });
+		return;
+	}
+	if (id === (req as AuthenticatedRequest).auth?.userId && !user.isAdmin) {
+		res.status(409).json({ message: 'You cannot remove your own administrator access.' });
+		return;
+	}
+	try {
+		const [result] = await pool.execute<ResultSetHeader>(
+			'UPDATE logusers SET lu_name = ?, lu_email = ?, lu_admin = ? WHERE loguser_id = ?',
+			[user.name, user.email, user.isAdmin ? 1 : 0, id],
+		);
+		if (result.affectedRows === 0) {
+			res.status(404).json({ message: 'User not found.' });
+			return;
+		}
+		res.json({ loguser_id: id, lu_name: user.name, lu_email: user.email, lu_admin: user.isAdmin ? 1 : 0 });
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ER_DUP_ENTRY') {
+			res.status(409).json({ message: 'A user with that email already exists.' });
+			return;
+		}
+		next(error);
+	}
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	if (!id) {
+		res.status(400).json({ message: 'Invalid user id.' });
+		return;
+	}
+	if (id === (req as AuthenticatedRequest).auth?.userId) {
+		res.status(409).json({ message: 'You cannot delete your own account.' });
+		return;
+	}
+	try {
+		await ensurePasswordResetTable();
+		const connection = await pool.getConnection();
+		try {
+			await connection.beginTransaction();
+			const [result] = await connection.execute<ResultSetHeader>('DELETE FROM logusers WHERE loguser_id = ?', [id]);
+			if (result.affectedRows === 0) {
+				await connection.rollback();
+				res.status(404).json({ message: 'User not found.' });
+				return;
+			}
+			await connection.execute('DELETE FROM password_reset_tokens WHERE user_id = ?', [id]);
+			await connection.commit();
+			res.status(204).send();
+		} catch (error) {
+			await connection.rollback();
+			throw error;
+		} finally {
+			connection.release();
+		}
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.get('/api/admin/lookup-groups', requireAdmin, async (_req, res, next) => {
+	try {
+		const [rows] = await pool.query<LookupRow[]>('SELECT DISTINCT lk_group FROM lookup ORDER BY lk_group');
+		res.json(rows.map((row) => row.lk_group));
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.get('/api/admin/lookups', requireAdmin, async (req, res, next) => {
+	const group = req.query.group;
+	if (group !== undefined && typeof group !== 'string') {
+		res.status(400).json({ message: 'Invalid lookup group.' });
+		return;
+	}
+	try {
+		const [rows] = await pool.query<LookupRow[]>(
+			`SELECT lookup_id, lk_group, lk_name, lk_seq, lk_header FROM lookup
+			 ${group === undefined ? '' : 'WHERE lk_group = ?'}
+			 ORDER BY lk_group, lk_seq, lk_name, lookup_id`,
+			group === undefined ? [] : [group],
+		);
+		res.json(rows);
+	} catch (error) {
+		next(error);
+	}
+});
+
+const parseAdminLookup = (body: { lk_group?: unknown; lk_name?: unknown; lk_seq?: unknown; lk_header?: unknown }) => {
+	const group = typeof body?.lk_group === 'string' ? body.lk_group.trim() : '';
+	const name = typeof body?.lk_name === 'string' ? body.lk_name.trim() : '';
+	const seq = body?.lk_seq;
+	const header = body?.lk_header;
+	if (!group || group.length > 255 || !name || name.length > 255 ||
+		typeof seq !== 'number' || !Number.isSafeInteger(seq) || typeof header !== 'boolean') return null;
+	return { group, name, seq, header };
 };
+
+app.post('/api/admin/lookups', requireAdmin, async (req, res, next) => {
+	const lookup = parseAdminLookup(req.body);
+	if (!lookup) {
+		res.status(400).json({ message: 'A valid group, name, sequence and header status are required.' });
+		return;
+	}
+	try {
+		const [rows] = await pool.query<LookupCreateRow[]>('SELECT COALESCE(MAX(lookup_id), 0) + 1 AS next_lookup_id FROM lookup');
+		const id = rows[0]?.next_lookup_id;
+		if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new Error('Unable to allocate a lookup id.');
+		await pool.execute(
+			'INSERT INTO lookup (lookup_id, lk_group, lk_name, lk_seq, lk_header) VALUES (?, ?, ?, ?, ?)',
+			[id, lookup.group, lookup.name, lookup.seq, lookup.header ? 1 : 0],
+		);
+		res.status(201).json({ lookup_id: id, lk_group: lookup.group, lk_name: lookup.name, lk_seq: lookup.seq, lk_header: lookup.header ? 1 : 0 });
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ER_DUP_ENTRY') {
+			res.status(409).json({ message: 'Unable to add lookup because it conflicts with another record. Please retry.' });
+			return;
+		}
+		next(error);
+	}
+});
+
+const lookupUnreferenced = `
+	NOT EXISTS (SELECT 1 FROM event WHERE event.ev_venue = lookup.lookup_id)
+	AND NOT EXISTS (SELECT 1 FROM repair WHERE repair.rp_section = lookup.lookup_id
+		OR repair.rp_source = lookup.lookup_id OR repair.rp_repairer = lookup.lookup_id)
+`;
+
+const lookupNotChanged = async (id: number, res: express.Response): Promise<void> => {
+	const [rows] = await pool.query<LookupRow[]>('SELECT lookup_id FROM lookup WHERE lookup_id = ?', [id]);
+	if (!rows[0]) {
+		res.status(404).json({ message: 'Lookup not found.' });
+	} else {
+		res.status(409).json({ message: 'This lookup is used by events or repairs and cannot be deleted or moved to another group or made a header.' });
+	}
+};
+
+app.put('/api/admin/lookups/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	const lookup = parseAdminLookup(req.body);
+	if (!id || !lookup) {
+		res.status(400).json({ message: 'A valid group, name, sequence and header status are required.' });
+		return;
+	}
+	try {
+		const [result] = await pool.execute<ResultSetHeader>(
+			`UPDATE lookup SET lk_group = ?, lk_name = ?, lk_seq = ?, lk_header = ?
+			 WHERE lookup_id = ? AND ((BINARY lk_group = BINARY ? AND (? = 0 OR COALESCE(lk_header, 0) <> 0)) OR (${lookupUnreferenced}))`,
+			[lookup.group, lookup.name, lookup.seq, lookup.header ? 1 : 0, id, lookup.group, lookup.header ? 1 : 0],
+		);
+		if (result.affectedRows === 0) {
+			await lookupNotChanged(id, res);
+			return;
+		}
+		res.json({ lookup_id: id, lk_group: lookup.group, lk_name: lookup.name, lk_seq: lookup.seq, lk_header: lookup.header ? 1 : 0 });
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.delete('/api/admin/lookups/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	if (!id) {
+		res.status(400).json({ message: 'Invalid lookup id.' });
+		return;
+	}
+	try {
+		const [result] = await pool.execute<ResultSetHeader>(
+			`DELETE FROM lookup WHERE lookup_id = ? AND (${lookupUnreferenced})`, [id],
+		);
+		if (result.affectedRows === 0) {
+			await lookupNotChanged(id, res);
+			return;
+		}
+		res.status(204).send();
+	} catch (error) {
+		next(error);
+	}
+});
 
 app.get('/api/lookups/:group', async (req, res, next) => {
 	const group = req.params.group as LookupGroup;
@@ -643,7 +889,6 @@ app.get('/api/events/summary', async (req, res, next) => {
 				FROM event
 				WHERE ev_date <= ?
 				ORDER BY ev_date DESC, event_id DESC
-				LIMIT 12
 			) recent
 			LEFT JOIN lookup venue ON venue.lookup_id = recent.ev_venue AND venue.lk_group = 'venue'
 			LEFT JOIN repair r ON r.rp_event = recent.event_id
@@ -690,28 +935,42 @@ app.get('/api/events', async (req, res, next) => {
 	}
 });
 
-app.post('/api/events', requireAdmin, async (req, res, next) => {
-	const date = typeof req.body?.ev_date === 'string' ? req.body.ev_date : '';
-	const venueId = req.body?.ev_venue;
-	const comment = typeof req.body?.ev_comment === 'string' ? req.body.ev_comment.trim() : '';
+const parseEventPayload = (body: { ev_date?: unknown; ev_venue?: unknown; ev_comment?: unknown }) => {
+	const date = typeof body?.ev_date === 'string' ? body.ev_date : '';
+	const venueId = body?.ev_venue;
+	const comment = typeof body?.ev_comment === 'string' ? body.ev_comment.trim() : '';
 
 	if (
 		!isValidEventDate(date)
+		|| typeof venueId !== 'number'
 		|| !Number.isSafeInteger(venueId)
 		|| venueId <= 0
-		|| (req.body?.ev_comment !== undefined && typeof req.body.ev_comment !== 'string')
+		|| (body?.ev_comment !== undefined && typeof body.ev_comment !== 'string')
 		|| Array.from(comment).length > 255
 	) {
+		return null;
+	}
+	return { date, venueId, comment };
+};
+
+const selectEventVenue = async (venueId: number) => {
+	const [venues] = await pool.query<LookupRow[]>(
+		"SELECT lookup_id, lk_name FROM lookup WHERE lookup_id = ? AND lk_group = 'venue' AND COALESCE(lk_header, 0) = 0 LIMIT 1",
+		[venueId],
+	);
+	return venues[0];
+};
+
+app.post('/api/events', requireAdmin, async (req, res, next) => {
+	const payload = parseEventPayload(req.body);
+	if (!payload) {
 		res.status(400).json({ message: 'A valid date, venue, and comment of at most 255 characters are required.' });
 		return;
 	}
+	const { date, venueId, comment } = payload;
 
 	try {
-		const [venues] = await pool.query<LookupRow[]>(
-			"SELECT lookup_id, lk_name FROM lookup WHERE lookup_id = ? AND lk_group = 'venue' AND COALESCE(lk_header, 0) = 0 LIMIT 1",
-			[venueId],
-		);
-		const venue = venues[0];
+		const venue = await selectEventVenue(venueId);
 		if (!venue) {
 			res.status(400).json({ message: 'Please select a valid venue.' });
 			return;
@@ -728,6 +987,57 @@ app.post('/api/events', requireAdmin, async (req, res, next) => {
 			ev_comment: comment,
 			venue_name: venue.lk_name,
 		});
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.put('/api/admin/events/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	const payload = parseEventPayload(req.body);
+	if (!id || !payload) {
+		res.status(400).json({ message: 'A valid date, venue, and comment of at most 255 characters are required.' });
+		return;
+	}
+	const { date, venueId, comment } = payload;
+	try {
+		const venue = await selectEventVenue(venueId);
+		if (!venue) {
+			res.status(400).json({ message: 'Please select a valid venue.' });
+			return;
+		}
+		const [result] = await pool.execute<ResultSetHeader>(
+			'UPDATE event SET ev_date = ?, ev_venue = ?, ev_comment = ? WHERE event_id = ?',
+			[date, venueId, comment, id],
+		);
+		if (result.affectedRows === 0) {
+			res.status(404).json({ message: 'Event not found.' });
+			return;
+		}
+		res.json({ event_id: id, ev_date: date, ev_venue: venueId, ev_comment: comment, venue_name: venue.lk_name });
+	} catch (error) {
+		next(error);
+	}
+});
+
+app.delete('/api/admin/events/:id', requireAdmin, async (req, res, next) => {
+	const id = adminId(req.params.id);
+	if (!id) {
+		res.status(400).json({ message: 'Invalid event id.' });
+		return;
+	}
+	try {
+		const [result] = await pool.execute<ResultSetHeader>(
+			'DELETE FROM event WHERE event_id = ? AND NOT EXISTS (SELECT 1 FROM repair WHERE repair.rp_event = event.event_id)',
+			[id],
+		);
+		if (result.affectedRows === 0) {
+			const [rows] = await pool.query<EventRow[]>('SELECT event_id FROM event WHERE event_id = ?', [id]);
+			if (!rows[0]) res.status(404).json({ message: 'Event not found.' });
+			else res.status(409).json({ message: 'This event has repairs and cannot be deleted.' });
+			return;
+		}
+		res.status(204).send();
 	} catch (error) {
 		next(error);
 	}
